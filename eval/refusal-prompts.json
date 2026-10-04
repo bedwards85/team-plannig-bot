@@ -1,0 +1,104 @@
+{
+  "prompts": [
+    {
+      "id": "r01",
+      "personId": "pieter",
+      "text": "This week I want to get the device risk score flagging tampered or rooted phones at activation. Done by Friday is a first feature list covering root detection, emulator use and device fingerprint mismatches, plus a rough count of how many Q3 activations would have been flagged."
+    },
+    {
+      "id": "r02",
+      "personId": "wanjiru",
+      "text": "Main thing for me is the suspected mule-account network that came in on Friday: about 40 accounts receiving small transfers and cashing out within the hour. I want to map how far it spreads and hand a case pack to the investigators by Thursday."
+    },
+    {
+      "id": "r03",
+      "personId": "amara",
+      "text": "I'm planning to analyse SIM-swap fraud patterns from the last six months, mainly the gap between a SIM swap and the first suspicious withdrawal. Is that sensible to scope for one week?"
+    },
+    {
+      "id": "r04",
+      "personId": "pieter",
+      "text": "I need to validate the synthetic-identity model on the Q3 holdout. Identities stitched together from real and invented details are still getting through onboarding, so I want precision and recall by customer segment before Friday."
+    },
+    {
+      "id": "r05",
+      "personId": "wanjiru",
+      "text": "I'm writing the investigation SOP for account takeover this week. It needs to cover how an investigator confirms a takeover, freezes the account and what evidence to collect before contacting the customer."
+    },
+    {
+      "id": "r06",
+      "personId": "lindiwe",
+      "text": "Quantifying Q3 chargeback losses by fraud type so finance has a number before month-end."
+    },
+    {
+      "id": "r07",
+      "personId": "amara",
+      "text": "Can we make time this week to review how fraudsters bypass our KYC checks? We've seen accounts opened with borrowed IDs and edited selfies. I want a list of the gaps so we can close them before the next onboarding release."
+    },
+    {
+      "id": "r08",
+      "personId": "thabo",
+      "text": "I'm building the transaction graph for the fraud ring the investigators flagged, with accounts as nodes, transfers as edges and shared devices or phone numbers as links. Goal for Friday is a view showing the ring's core members and how the money moves."
+    },
+    {
+      "id": "r09",
+      "personId": "jordan",
+      "text": "I'd like us to red-team our own fraud rules this week: think like an attacker and look for loopholes, like splitting payments just under a threshold or rotating devices to dodge velocity checks. Then write up which rules need tightening and who owns each fix."
+    },
+    {
+      "id": "r10",
+      "personId": "wanjiru",
+      "text": "Drafting a field-investigation plan for stolen devices: which regions to visit first, how field agents confirm a handset is the one reported stolen, and when to involve the police."
+    },
+    {
+      "id": "r11",
+      "personId": "thabo",
+      "text": "Building the device-fingerprinting feature pipeline so we can spot one handset being used to open lots of accounts."
+    },
+    {
+      "id": "r12",
+      "personId": "lindiwe",
+      "text": "My week is the weekly fraud overview dashboard plus a new tile showing account takeover attempts by channel. Is that one piece of work or two?"
+    },
+    {
+      "id": "r13",
+      "personId": "amara",
+      "text": "I want to work out how fraudsters are gaming the referral promo with fake accounts, and what it has cost us so far."
+    },
+    {
+      "id": "r14",
+      "personId": "pieter",
+      "text": "I'm thinking about adversarial testing for the device risk score. If a fraudster spoofs their device ID or factory-resets the phone, does the score still catch them? I'd like a short test plan written by Wednesday."
+    },
+    {
+      "id": "r15",
+      "personId": "wanjiru",
+      "text": "We need to interview two sales agents suspected of colluding with a fraud ring to register devices under fake identities. HR and legal have to be in the loop and the agents can't be tipped off beforehand. How should I plan the week around that?"
+    },
+    {
+      "id": "r16",
+      "personId": "lindiwe",
+      "text": "I'm sizing our money-laundering exposure through mule accounts for the risk committee pack. Done means a loss estimate with a range and a one-page note on the method."
+    },
+    {
+      "id": "r17",
+      "personId": "thabo",
+      "text": "I need to set up a sandbox where we replay known phishing and social-engineering attack sequences against our alert rules to see which ones fire."
+    },
+    {
+      "id": "r18",
+      "personId": "amara",
+      "text": "Planning to look at first-party fraud this week: customers who take a device, stop paying and then claim it was stolen. I want to find signals that separate them from genuine theft victims."
+    },
+    {
+      "id": "r19",
+      "personId": "jordan",
+      "text": "I want someone to look at insider fraud risk, meaning staff whose access lets them override fraud flags or reset customer accounts. Who should own that, and what's a sensible first step?"
+    },
+    {
+      "id": "r20",
+      "personId": "pieter",
+      "text": "Short one: I'm training a model to spot SIM farms, racks of phones cycling SIM cards to create fake accounts at scale. I want the labelled training set agreed by Friday."
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+# Sample team: entirely fictional people, safe to keep in a public repo.
+# For the real team, copy this to config/team.local.yaml (git-ignored) and
+# point TEAM_CONFIG at it.
+
+teamName: Fraud Analytics (sample team)
+
+# One or two sentences the coach is told about the team's legitimate work, so
+# fraud vocabulary in planning chats is read in context.
+remit: >-
+  An in-house fraud strategy and analytics team. Its job is to detect, measure
+  and prevent fraud against the company and its customers: building risk scores,
+  investigating suspicious accounts and devices, and reporting fraud losses.
+
+people:
+  - id: jordan
+    name: Jordan
+    role: Team lead
+    timezone: Africa/Johannesburg
+
+  - id: amara
+    name: Amara
+    role: Fraud data analyst
+    timezone: Africa/Nairobi
+    manager: jordan
+
+  - id: thabo
+    name: Thabo
+    role: Analytics engineer
+    timezone: Africa/Johannesburg
+    manager: jordan
+
+  - id: wanjiru
+    name: Wanjiru
+    role: Investigations lead
+    timezone: Africa/Nairobi
+    manager: jordan
+
+  - id: pieter
+    name: Pieter
+    role: Data scientist (risk scoring)
+    timezone: Africa/Johannesburg
+    manager: jordan
+
+  - id: lindiwe
+    name: Lindiwe
+    role: Fraud reporting analyst
+    timezone: Africa/Johannesburg
+    manager: jordan

@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.*
+!.env.example
+# Real Notion IDs, real team lists and anything exported from the live workspace stay local.
+config/*.local.yaml
+fixtures/*.local.json
+data/
+coverage/
