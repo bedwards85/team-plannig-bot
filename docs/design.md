@@ -53,7 +53,7 @@ sequenceDiagram
   B-->>P: first sentence, then at most 1 update per second
   B->>D: append both turns verbatim
   Note over B,N: Hot path ends. Below is background work.
-  P->>B: types "done"
+  P->>B: types "/done" (or taps Save)
   B-)X: transcript, once
   X->>C: one structured extraction
   X-->>P: "Here's what I'll log" card with Save
@@ -206,10 +206,10 @@ Planning, check-in and review are separate Claude conversations, each started fr
 
 **Carry-overs.** Last week's items not Done or Dropped, plus "In progress" tracker Tasks the person owns: at most three, by due date, with [Finish it] [Carry part of it] [Already done] [Drop it]. "Carry part" closes the old item as Partly and links a new one. "Already done" offers a tracker suggestion. A third carry-over prompts a re-scope offer; a new quarter's first Monday offers a KR picker.
 
-**Coaching.** `prompts/coach.md` states the team's anti-fraud remit and the rules: one question per message, at most 80 words; reflect back and offer options; never do the task. Per item: done by Friday, steps, blocker sweep (access, people, decisions, data, time), KR link, first step today. The coach then recaps and asks for "done"; one extraction builds the Save card (items, changeable KR, blockers, a "share" tick, [Save] [Change something]). No click in two working hours saves a draft. Button choices enter the chat as a line from the person, e.g. `[Chose: Finish "Map case tables"]`.
+**Coaching.** The team's remit comes from `team.yaml` and is shown with the OKRs; `prompts/coach.md` holds the rules: one question per message, at most 80 words; reflect back and offer options; never do the task. Per item: done by Friday, steps, blocker sweep (access, people, decisions, data, time), KR link, first step today. The coach then recaps in one short line per item and asks the person to type "/done" (a Save button in Teams); one extraction builds the Save card (items, changeable KR, blockers, a "share" tick, [Save] [Change something]). No click in two working hours saves a draft. Button choices enter the chat as a line from the person, e.g. `[Chose: Finish "Map case tables"]`.
 
 **Examples:**
-- Opener: "Morning Thabo. New week, so let's sketch it out together. Two things are still open from last week: *Map case tables* and *Data-quality tests*. Do you plan to finish these off?"
+- Opener: "Hi Thabo, new week. Let's sketch it out together. These are still in progress on the tracker: *Map case tables* (KR 2.1) and *Data-quality tests* (KR 2.3). Which of these do you plan to finish off this week?" Only in-progress tasks are offered; for a longer-running one the coach asks what progress this week looks like rather than whether to finish or drop it.
 - Coaching: "Nice, so the mapping is the big one. If it goes well, what could you show Wanjiru on Friday?"
 - KR: "This sounds like KR 2.1, the case data model. Does that fit?"
 - Check-in: "Hi Amara, quick check-in. How's *Audit log access request* going?" [On track] [Slower than hoped] [Stuck] [Done]
@@ -313,8 +313,8 @@ client.messages.stream({
 
 Claude can decline a request (`stop_reason: "refusal"`). This team discusses fraud all day, so false alarms are the risk.
 
-1. `coach.md` states the remit: detecting, measuring and preventing fraud against the company and its customers.
-2. The partial text is discarded (replaced in Teams) and the bot says: "Let's keep this to the plan itself. What would done look like for that piece by Friday?" Only the category is logged; the refused message stays out of the model's history.
+1. The team's remit (from `team.yaml`, shown with the OKRs) states the legitimate work: detecting, measuring and preventing fraud against the company and its customers; `coach.md` tells the coach to read the team's own vocabulary in that light.
+2. The partial text is discarded (replaced in Teams) and the bot says: "Let's keep this to the plan itself. What would done look like for that piece by Friday?" Only the category is logged. The refused message stays out of the model's history: a neutral stand-in ("The person described a work item; details left out.") and the redirect are recorded instead, so the triggering text is never re-sent.
 3. After a second refusal in one conversation, a card capture with no model takes over: title, KR picker, blocker type.
 4. Server-side fallback is **off**: it retries only two categories, on a different model, and not "general harms", this team's likely false alarm.
 5. Phase 1 runs 20 fraud-vocabulary planning messages; the target is zero refusals.

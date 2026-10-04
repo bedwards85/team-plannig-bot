@@ -25,7 +25,7 @@ export function loadDotEnv(path = ".env"): void {
 }
 
 export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
-  const thinking = (env.COACH_THINKING ?? "adaptive") as ThinkingMode;
+  const thinking = (env.COACH_THINKING ?? "adaptive").trim().toLowerCase() as ThinkingMode;
   if (thinking !== "adaptive" && thinking !== "off") {
     throw new Error(`COACH_THINKING must be "adaptive" or "off", got "${thinking}"`);
   }

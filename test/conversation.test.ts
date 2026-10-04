@@ -6,6 +6,8 @@ import {
   CoachConversation,
   REFUSAL_REDIRECT,
   REPEATED_REFUSAL_NOTE,
+  WITHHELD_USER_TEXT,
+  isRetryable,
 } from "../src/core/conversation.js";
 import { findPerson } from "../src/domain/okr.js";
 import { FirstTextTimeoutError } from "../src/ports/llm.js";
@@ -20,8 +22,12 @@ function make(llm: ScriptedLLM, personId = "ann") {
     person: findPerson(team, personId),
     touchpoint: "plan",
     clock: () => MONDAY,
+    retryDelayMs: () => 0,
   });
 }
+
+const overloadedMidStream = () =>
+  new Anthropic.APIError(undefined, { type: "error", error: { type: "overloaded_error" } }, "Overloaded", new Headers(), "overloaded_error");
 
 describe("CoachConversation", () => {
   it("starts with the context note and the template opener, which lists open items", () => {
@@ -30,7 +36,7 @@ describe("CoachConversation", () => {
     expect(c.messages[0]!.role).toBe("user");
     expect(c.messages[1]).toEqual({ role: "assistant", content: c.openerText });
     expect(c.openerText).toContain("Sooner task (KR 1.2, due 9 Oct)");
-    expect(c.openerText).toMatch(/Do you plan to finish these off/);
+    expect(c.openerText).toMatch(/Which of these do you plan to finish off this week\?/);
   });
 
   it("keeps history append-only: every request starts with the previous request plus its reply", async () => {
@@ -70,14 +76,19 @@ describe("CoachConversation", () => {
     const llm = new ScriptedLLM([{ refuse: "cyber" }, { refuse: null }, { reply: "Back on track?" }]);
     const c = make(llm);
     const first = await c.send("something odd");
-    expect(first).toMatchObject({ kind: "refused", text: REFUSAL_REDIRECT, category: "cyber" });
-    expect(c.messages.at(-1)).toEqual({ role: "assistant", content: REFUSAL_REDIRECT });
+    expect(first).toMatchObject({ kind: "refused", text: REFUSAL_REDIRECT.plan, category: "cyber" });
+    expect(c.messages.at(-1)).toEqual({ role: "assistant", content: REFUSAL_REDIRECT.plan });
     const second = await c.send("again");
     expect(second).toMatchObject({ kind: "refused", text: REPEATED_REFUSAL_NOTE });
     const third = await c.send("fine");
     expect(third.kind).toBe("reply");
-    // Nothing from the refused model output was kept.
-    expect(JSON.stringify(c.messages)).not.toContain("I'll start on that");
+    const history = JSON.stringify(c.messages);
+    // Neither the refused output nor the messages that triggered it are kept or re-sent.
+    expect(history).not.toContain("I'll start on that");
+    expect(history).not.toContain("something odd");
+    expect(history).not.toContain("again");
+    expect(history).toContain(WITHHELD_USER_TEXT);
+    expect(JSON.stringify(llm.requests[2]!.messages)).not.toContain("something odd");
   });
 
   it("retries once on a first-text timeout and then succeeds", async () => {
@@ -95,6 +106,43 @@ describe("CoachConversation", () => {
     expect(outcome).toMatchObject({ kind: "error", text: CONNECTION_TROUBLE });
     expect(c.messages).toEqual(before);
     expect((await c.send("hi again")).kind).toBe("reply");
+  });
+
+  it("retries an overload that arrives inside the stream before any text", async () => {
+    const llm = new ScriptedLLM([{ error: overloadedMidStream() }, { reply: "Here we go?" }]);
+    expect(await make(llm).send("hi")).toMatchObject({ kind: "reply", attempts: 2 });
+  });
+
+  it("does not retry once text has been shown, so nothing is shown twice", async () => {
+    const llm = new ScriptedLLM([{ textThenError: "What does ", error: overloadedMidStream() }, { reply: "never" }]);
+    const c = make(llm);
+    const before = c.messages;
+    expect((await c.send("hi")).kind).toBe("error");
+    expect(llm.requests).toHaveLength(1);
+    expect(c.messages).toEqual(before);
+  });
+
+  it("treats an empty reply as a failed attempt and retries", async () => {
+    const llm = new ScriptedLLM([{ reply: "" }, { reply: "Sorry, what was that?" }]);
+    const c = make(llm);
+    expect(await c.send("hi")).toMatchObject({ kind: "reply", attempts: 2 });
+    expect(JSON.stringify(c.messages)).not.toContain('"content":[]');
+  });
+
+  it("times first text from the person's message, across a retry", async () => {
+    const llm = new ScriptedLLM([{ error: new FirstTextTimeoutError(12_000), delayMs: 40 }, { reply: "There?" }]);
+    const outcome = await make(llm).send("hi");
+    expect(outcome.kind).toBe("reply");
+    if (outcome.kind === "reply") expect(outcome.firstTextMs).toBeGreaterThanOrEqual(40);
+  });
+
+  it("classifies errors: transient ones retry, permanent ones and user aborts don't", () => {
+    expect(isRetryable(overloadedMidStream())).toBe(true);
+    expect(isRetryable(new Anthropic.APIConnectionError({ message: "reset" }))).toBe(true);
+    expect(isRetryable(new Anthropic.AnthropicError("terminated"))).toBe(true);
+    expect(isRetryable(new Anthropic.APIUserAbortError())).toBe(false);
+    expect(isRetryable(new Anthropic.AuthenticationError(401, {}, "no", new Headers()))).toBe(false);
+    expect(isRetryable(new Error("bug"))).toBe(false);
   });
 
   it("does not retry errors that will not go away (bad request)", async () => {

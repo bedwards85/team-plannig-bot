@@ -14,6 +14,11 @@ describe("checkReply", () => {
   it("flags an empty reply", () => {
     expect(checkReply("   ").ok).toBe(false);
   });
+  it("reads an either/or and a quoted example as one question", () => {
+    expect(checkReply("Is it more the model or the data? Or something else?").ok).toBe(true);
+    expect(checkReply('You could ask "who signs this off?" first. What feels most likely?').ok).toBe(true);
+    expect(checkReply("That fits KR 2.1, right? What's the first step today?").ok).toBe(false);
+  });
 });
 
 describe("time helpers", () => {
@@ -44,6 +49,10 @@ describe("eval support", () => {
     const valid = new Set(["1.2", "2.1"]);
     expect(unknownKrCodes("Sounds like KR 1.2, or maybe KR 7.4?", valid)).toEqual(["7.4"]);
     expect(unknownKrCodes("No KRs here", valid)).toEqual([]);
+    expect(unknownKrCodes("Sounds like KR 2.1 or 7.4. Right?", valid)).toEqual(["7.4"]);
+    expect(unknownKrCodes("KRs 2.1 and 8.8, or KR 2.1/9.1", valid)).toEqual(["8.8", "9.1"]);
+    expect(unknownKrCodes("key result 6.6", valid)).toEqual(["6.6"]);
+    expect(unknownKrCodes("KR 2.1 and an AUC of 0.80", valid)).toEqual([]);
   });
   it("keeps result order under limited concurrency", async () => {
     const out = await mapLimit([30, 10, 20], 2, async (ms, i) => {

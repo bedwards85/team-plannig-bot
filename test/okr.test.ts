@@ -13,6 +13,10 @@ describe("renderOkrSnapshot", () => {
     expect(text.indexOf("KR 1.2:")).toBeLessThan(text.indexOf("KR 1.10:"));
   });
 
+  it("starts with the team's remit, so field vocabulary is read in context", () => {
+    expect(renderOkrSnapshot(tracker, team)).toMatch(/^# Team: Test team\n\nRemit: Tests\.\n/);
+  });
+
   it("leaves out proposed and rejected rows", () => {
     const text = renderOkrSnapshot(tracker, team);
     expect(text).not.toContain("Proposed task");
@@ -27,8 +31,16 @@ describe("renderOkrSnapshot", () => {
 });
 
 describe("openItemsFor", () => {
-  it("returns in-progress work first, then by due date, at most 3, skipping done and proposed", () => {
-    expect(openItemsFor("ann", tracker).map((r) => r.id)).toEqual(["t-001", "t-002", "t-006"]);
+  it("returns only in-progress tasks, soonest due first, skipping done, not-started and proposed", () => {
+    expect(openItemsFor("ann", tracker).map((r) => r.id)).toEqual(["t-001", "t-002"]);
+  });
+
+  it("caps the list at three", () => {
+    const many = {
+      ...tracker,
+      rows: [1, 2, 3, 4].map((n) => ({ ...tracker.rows[5]!, id: `t-10${n}`, due: `2026-10-1${n}` })),
+    };
+    expect(openItemsFor("ann", many).map((r) => r.id)).toEqual(["t-101", "t-102", "t-103"]);
   });
 
   it("returns nothing for someone with no tasks", () => {

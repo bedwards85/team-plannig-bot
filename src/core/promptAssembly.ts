@@ -37,23 +37,29 @@ const TOUCHPOINT_LABEL: Record<Touchpoint, string> = {
 
 export function buildContextMessage(input: ContextInput): Anthropic.MessageParam {
   const { team, person, touchpoint, weekOf, openItems } = input;
-  const items = openItems.length
-    ? openItems
-        .map((t) => {
-          const due = t.due ? `, due ${t.due}` : "";
-          const state = t.currentState ? `; current state: ${t.currentState}` : "";
-          return `- Task ${t.id} (KR ${t.krCode}): ${t.name} [${t.status}${due}${t.blocked ? ", blocked" : ""}]${state}`;
-        })
-        .join("\n")
-    : "- none";
+  const items = openItems
+    .map((t) => {
+      const due = t.due ? `, due ${t.due}` : "";
+      const state = t.currentState ? `; current state: ${t.currentState}` : "";
+      return `- Task ${t.id} (KR ${t.krCode}): ${t.name} [${t.status}${due}${t.blocked ? ", blocked" : ""}]${state}`;
+    })
+    .join("\n");
+
+  let itemsSection: string;
+  if (touchpoint !== "plan") {
+    itemsSection = "This week's saved plan: not available yet (saving plans arrives in Phase 2). Ask what they planned.";
+  } else if (openItems.length) {
+    itemsSection = `Their in-progress tracker items, already listed in the opener:\n${items}`;
+  } else {
+    itemsSection = "Their in-progress tracker items: none. The opener asked what is on their plate.";
+  }
 
   const text = [
     "<conversation_context>",
     `Team: ${team.teamName}`,
     `Person: ${person.name}${person.role ? ` (${person.role})` : ""}, time zone ${person.timezone}`,
     `Touchpoint: ${TOUCHPOINT_LABEL[touchpoint]}, week of ${shortDate(weekOf)}`,
-    `Their open tracker items, already listed in the opener:`,
-    items,
+    itemsSection,
     "</conversation_context>",
     "The system has sent the opener below on your behalf. Continue the conversation from the person's reply.",
   ].join("\n");

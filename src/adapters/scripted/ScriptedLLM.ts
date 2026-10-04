@@ -1,10 +1,13 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { LLMPort, TurnRequest, TurnResult } from "../../ports/llm.js";
 
-export type ScriptedStep =
+export type ScriptedStep = (
   | { reply: string }
   | { refuse: string | null }
-  | { error: Error };
+  | { error: Error }
+  /** Streams some text, then fails (e.g. a dropped connection mid-reply). */
+  | { textThenError: string; error: Error }
+) & { delayMs?: number };
 
 /**
  * A fake model for tests: plays back scripted replies, refusals or errors in
@@ -21,30 +24,22 @@ export class ScriptedLLM implements LLMPort {
     this.requests.push(structuredClone(request));
     const step = this.steps[this.index++];
     if (!step) throw new Error("ScriptedLLM ran out of steps");
+    if (step.delayMs) await new Promise((r) => setTimeout(r, step.delayMs));
+    if ("textThenError" in step) {
+      onText(step.textThenError);
+      throw step.error;
+    }
     if ("error" in step) throw step.error;
 
     const usage = { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 };
-    if ("refuse" in step) {
-      onText("I'll start on that");
-      const content: Anthropic.ContentBlock[] = [{ type: "text", text: "I'll start on that", citations: null }];
-      return {
-        text: "I'll start on that",
-        content,
-        stopReason: "refusal",
-        refusalCategory: step.refuse,
-        firstTextMs: 1,
-        totalMs: 2,
-        usage,
-      };
-    }
-
-    for (const word of step.reply.split(/(?<= )/)) onText(word);
-    const content: Anthropic.ContentBlock[] = [{ type: "text", text: step.reply, citations: null }];
+    const text = "refuse" in step ? "I'll start on that" : step.reply;
+    if (text) onText(text);
+    const content: Anthropic.ContentBlock[] = text ? [{ type: "text", text, citations: null }] : [];
     return {
-      text: step.reply,
+      text,
       content,
-      stopReason: "end_turn",
-      refusalCategory: null,
+      stopReason: "refuse" in step ? "refusal" : "end_turn",
+      refusalCategory: "refuse" in step ? step.refuse : null,
       firstTextMs: 1,
       totalMs: 2,
       usage,

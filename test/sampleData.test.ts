@@ -58,3 +58,14 @@ describe("sample data", () => {
     expect(blob).not.toMatch(/collection:\/\/|notion\.so|teams\.microsoft\.com|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/i);
   });
 });
+
+describe("sample openers", () => {
+  it("keep every Monday opener within the reply rules", async () => {
+    const { opener } = await import("../src/core/openers.js");
+    const { checkReply } = await import("../src/core/replyRules.js");
+    for (const p of team.people) {
+      const text = opener("plan", p, openItemsFor(p.id, tracker));
+      expect(checkReply(text).problems, `${p.id}: ${text}`).toEqual([]);
+    }
+  });
+});

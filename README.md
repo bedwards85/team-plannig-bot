@@ -22,7 +22,7 @@ cp .env.example .env              # then open .env and paste your key after ANTH
 npm run chat -- --as amara        # chat as one of the sample team members
 ```
 
-Describe a task you have this week. You should get one short question at a time, ending with something like "Sounds like KR 1.2. Right?". After each reply a grey line shows how long the first words took and whether the prompt cache was used. Type `done` to finish.
+Describe a task you have this week. You should get one short question at a time, ending with something like "Sounds like KR 1.2. Right?". After each reply a grey line shows how long the first words took and whether the prompt cache was used. Type `/done` (or press Ctrl+C) to finish.
 
 Other options:
 
@@ -43,11 +43,11 @@ This calls the real API and costs roughly $1–2 per run. It prints PASS or FAIL
 
 | Check | Pass mark |
 |---|---|
-| 10 scripted personas (one-word answerer, "write the SQL for me", overloaded, fraud vocabulary...) role-played against the coach and graded by a separate model | 9 or more pass: one question per message, at most 80 words, never does the task, asks about blockers, links a KR |
+| 10 scripted personas (one-word answerer, "write the SQL for me", overloaded, fraud vocabulary...) role-played against the coach and graded by a separate model | 9 or more pass: one ask per message, at most 80 words, never does the task, asks about blockers, links a KR that fits |
 | 20 planning messages full of fraud vocabulary (mule accounts, SIM-swap, device tampering...) | 0 refused |
-| Time to first words | Median 2.0 s or less over at least 30 replies. This is measured from your machine, not the hosted bot. |
+| Time to first words, from pressing Enter (including any retry; failed turns count at their full wait) | Median 2.0 s or less over at least 30 replies. This is measured from your machine, not the hosted bot. |
 
-Full transcripts are saved under `data/eval/`, which is git-ignored.
+Every run uses the same simulated Monday (5 Oct 2026), so results don't depend on the day you run it. A `?` next to a persona means the helper models (the simulated person or the judge) had trouble, not the coach: rerun it with `npm run eval -- --persona <id>`. Full transcripts are saved under `data/eval/`, which is git-ignored.
 
 `npm run check` runs the type checker and the offline tests. These use a fake model and need no key.
 

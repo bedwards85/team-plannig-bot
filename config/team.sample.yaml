@@ -4,12 +4,14 @@
 
 teamName: Fraud Analytics (sample team)
 
-# One or two sentences the coach is told about the team's legitimate work, so
-# fraud vocabulary in planning chats is read in context.
+# What the team legitimately does, in a few sentences. The coach is given this
+# (with the OKRs) so that the team's everyday vocabulary is read in context.
 remit: >-
   An in-house fraud strategy and analytics team. Its job is to detect, measure
   and prevent fraud against the company and its customers: building risk scores,
   investigating suspicious accounts and devices, and reporting fraud losses.
+  Everyday vocabulary here includes mule accounts, SIM-swap fraud, synthetic
+  identities, account takeover, device tampering, fraud rings and chargebacks.
 
 people:
   - id: jordan

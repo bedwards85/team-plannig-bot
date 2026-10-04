@@ -21,7 +21,7 @@ function names(ids: string[], team: TeamConfig): string {
 }
 
 /**
- * Renders the team's OKRs as plain text for the system prompt.
+ * Renders the team's remit and OKRs as plain text for the system prompt.
  *
  * The output must be byte-identical for the same tracker state, because it sits
  * inside the cached prompt prefix: rows are sorted, and nothing time-dependent
@@ -33,7 +33,14 @@ export function renderOkrSnapshot(tracker: TrackerFixture, team: TeamConfig): st
   const tasks = rows.filter((r) => r.type === "Task").sort(byKrThenId);
   const objectives = [...new Set(krs.map((k) => k.objective))];
 
-  const lines: string[] = [`# Team OKRs: ${tracker.label}`, ""];
+  const lines: string[] = [
+    `# Team: ${team.teamName}`,
+    "",
+    `Remit: ${team.remit.trim()}`,
+    "",
+    `# Team OKRs: ${tracker.label}`,
+    "",
+  ];
   for (const objective of objectives) {
     lines.push(`## Objective ${objective}`);
     for (const kr of krs.filter((k) => k.objective === objective)) {
@@ -51,16 +58,14 @@ export function renderOkrSnapshot(tracker: TrackerFixture, team: TeamConfig): st
 }
 
 /**
- * A person's open tracker tasks, most urgent first: the Monday opener offers
- * these as "still open". Phase 2 adds unfinished items from last week's plan.
+ * A person's in-progress tracker tasks, soonest due first (at most three): the
+ * Monday opener offers these as carry-overs. Not-started work is left for the
+ * person to raise. Phase 2 adds unfinished items from last week's saved plan.
  */
 export function openItemsFor(personId: string, tracker: TrackerFixture, limit = 3): OkrRow[] {
   return activeRows(tracker.rows)
-    .filter((r) => r.type === "Task" && r.status !== "Done" && r.owners.includes(personId))
+    .filter((r) => r.type === "Task" && r.status === "In progress" && r.owners.includes(personId))
     .sort((a, b) => {
-      // In-progress work first, then by due date (undated last), then id.
-      const prog = Number(b.status === "In progress") - Number(a.status === "In progress");
-      if (prog !== 0) return prog;
       const ad = a.due ?? "9999-12-31";
       const bd = b.due ?? "9999-12-31";
       return ad.localeCompare(bd) || a.id.localeCompare(b.id);

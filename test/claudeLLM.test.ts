@@ -3,12 +3,13 @@ import type { AddressInfo } from "node:net";
 import Anthropic from "@anthropic-ai/sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ClaudeLLM } from "../src/adapters/anthropic/ClaudeLLM.js";
+import { isRetryable } from "../src/core/conversation.js";
 import { FirstTextTimeoutError } from "../src/ports/llm.js";
 
 // A local stand-in for the Messages API that streams canned server-sent events,
 // so the real SDK code path runs without a key or network.
 
-type Scenario = { stopReason: "end_turn" | "refusal"; chunks: string[]; delayFirstMs?: number };
+type Scenario = { stopReason: "end_turn" | "refusal"; chunks: string[]; delayFirstMs?: number; errorBeforeText?: boolean };
 let scenario: Scenario = { stopReason: "end_turn", chunks: [] };
 let lastBody: any = null;
 let server: Server;
@@ -43,6 +44,12 @@ beforeAll(async () => {
       );
       if (scenario.delayFirstMs) await new Promise((r) => setTimeout(r, scenario.delayFirstMs));
       if (res.destroyed) return;
+      if (scenario.errorBeforeText) {
+        // How an overload arrives once the stream is already open (HTTP 200).
+        res.write(sse("error", { type: "error", error: { type: "overloaded_error", message: "Overloaded" } }));
+        res.end();
+        return;
+      }
       res.write(sse("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "", citations: null } }));
       for (const chunk of scenario.chunks) {
         res.write(sse("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: chunk } }));
@@ -119,6 +126,14 @@ describe("ClaudeLLM", () => {
     const result = await llm().streamTurn(request, () => {});
     expect(result.stopReason).toBe("refusal");
     expect(result.refusalCategory).toBe("cyber");
+  });
+
+  it("surfaces an in-stream overload as a retryable error", async () => {
+    scenario = { stopReason: "end_turn", chunks: [], errorBeforeText: true };
+    const error = await llm().streamTurn(request, () => {}).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Anthropic.APIError);
+    expect((error as InstanceType<typeof Anthropic.APIError>).type).toBe("overloaded_error");
+    expect(isRetryable(error)).toBe(true);
   });
 
   it("gives up with FirstTextTimeoutError when no text arrives in time", async () => {

@@ -14,8 +14,17 @@ export function wordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+/**
+ * Counts question marks, ignoring quoted examples ("e.g. 'Who signs off?'")
+ * and an either/or tail ("Is it A? Or B?"), which both read as one question.
+ * The eval's judge also checks "one ask per message" in meaning, so this
+ * only needs to catch the obvious cases.
+ */
 export function questionCount(text: string): number {
-  return (text.match(/\?/g) ?? []).length;
+  const unquoted = text.replace(/[“"][^”"\n]*[”"]/g, "");
+  const all = (unquoted.match(/\?/g) ?? []).length;
+  const orTails = (unquoted.match(/\?\s+or\b/gi) ?? []).length;
+  return all - orTails;
 }
 
 export function checkReply(text: string): ReplyCheck {

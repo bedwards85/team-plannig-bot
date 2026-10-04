@@ -79,6 +79,8 @@ export interface ChatLine {
 /**
  * Asks the simulator for the person's next message. The simulator plays the
  * person, so from its point of view the coach's lines are the "user" turns.
+ * Retries once on an empty or cut-off reply. Throws SimulatorError if it can't
+ * produce one, so the run is reported as inconclusive rather than a coach fault.
  */
 export async function simulateReply(
   client: Anthropic,
@@ -89,16 +91,31 @@ export async function simulateReply(
     role: l.speaker === "coach" ? "user" : "assistant",
     content: l.text,
   }));
-  const message = await client.messages.create({
-    model: SIMULATOR_MODEL,
-    max_tokens: 2_000,
-    thinking: { type: "adaptive" },
-    output_config: { effort: "low" },
-    system: systemPrompt,
-    messages,
-  });
-  if (message.stop_reason === "refusal") throw new Error("Simulated user model refused");
-  return { text: textOf(message).trim(), usage: usageOf(message) };
+  let problem = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const message = await client.messages.create({
+      model: SIMULATOR_MODEL,
+      max_tokens: 4_000,
+      thinking: { type: "adaptive" },
+      output_config: { effort: "low" },
+      system: systemPrompt,
+      messages,
+    });
+    const text = textOf(message).trim();
+    if (message.stop_reason === "refusal") problem = "simulated person was refused";
+    else if (message.stop_reason === "max_tokens") problem = "simulated person's reply was cut off";
+    else if (!text) problem = "simulated person sent an empty reply";
+    else return { text, usage: usageOf(message) };
+  }
+  throw new SimulatorError(problem);
+}
+
+/** A failure of the eval's helper models, not of the coach. */
+export class SimulatorError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SimulatorError";
+  }
 }
 
 // ---- Judge ----
@@ -107,30 +124,53 @@ export const JUDGE_MODEL = "claude-opus-5-5";
 
 export const VerdictSchema = z.object({
   never_does_task: z.boolean(),
+  one_question: z.boolean(),
   coach_tone: z.boolean(),
   blocker_question: z.boolean(),
   kr_link: z.boolean(),
-  steer_back: z.enum(["yes", "no", "not_applicable"]),
+  // Two booleans rather than an enum: the SDK's zod helper sends enums only as
+  // a description, whereas booleans are enforced by the API's structured output.
+  asked_coach_to_do_task: z.boolean(),
+  steered_back_every_time: z.boolean(),
   notes: z.string(),
 });
 export type Verdict = z.infer<typeof VerdictSchema>;
 
-export async function judge(client: Anthropic, prompt: string): Promise<{ verdict: Verdict | null; usage: TurnUsage }> {
-  const response = await client.messages.parse({
-    model: JUDGE_MODEL,
-    max_tokens: 16_000,
-    output_config: { effort: "medium", format: zodOutputFormat(VerdictSchema) },
-    messages: [{ role: "user", content: prompt }],
-  });
-  return { verdict: response.parsed_output ?? null, usage: usageOf(response) };
+/** Grades one transcript. Returns a reason instead of throwing when no verdict is possible. */
+export async function judge(
+  client: Anthropic,
+  prompt: string,
+): Promise<{ verdict: Verdict | null; problem: string | null; usage: TurnUsage | null }> {
+  try {
+    const response = await client.messages.parse({
+      model: JUDGE_MODEL,
+      max_tokens: 16_000,
+      output_config: { effort: "medium", format: zodOutputFormat(VerdictSchema) },
+      messages: [{ role: "user", content: prompt }],
+    });
+    const usage = usageOf(response);
+    if (response.stop_reason === "refusal") return { verdict: null, problem: "judge refused", usage };
+    if (response.stop_reason === "max_tokens") return { verdict: null, problem: "judge was cut off", usage };
+    if (!response.parsed_output) return { verdict: null, problem: "judge gave no verdict", usage };
+    return { verdict: response.parsed_output, problem: null, usage };
+  } catch (error) {
+    if (error instanceof Anthropic.APIError) throw error; // real API failures surface as such
+    return { verdict: null, problem: `judge output unreadable: ${(error as Error).message}`, usage: null };
+  }
 }
 
 export function transcriptText(lines: ChatLine[], personName: string): string {
   return lines.map((l) => `${l.speaker === "coach" ? "COACH" : personName.toUpperCase()}: ${l.text}`).join("\n\n");
 }
 
-/** KR codes the coach mentioned that are not in the tracker ("KR 9.9" etc.). */
+/**
+ * KR codes the coach mentioned that are not in the tracker. Handles lists such
+ * as "KR 2.1 or 2.4", "KRs 2.1 and 2.4", "KR 2.1/2.4" and "key result 2.4",
+ * but not stray numbers like "an AUC of 0.80".
+ */
 export function unknownKrCodes(text: string, validCodes: Set<string>): string[] {
-  const found = [...text.matchAll(/\bKRs?\s*(\d+\.\d+)/gi)].map((m) => m[1]!);
+  const re =
+    /\b(?:KRs?|key results?)\s*(\d+\.\d+(?:(?:\s*[,/&]\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+)(?:KR\s*)?[1-9]\d*\.\d+)*)/gi;
+  const found = [...text.matchAll(re)].flatMap((m) => [...m[1]!.matchAll(/\d+\.\d+/g)].map((c) => c[0]));
   return [...new Set(found.filter((c) => !validCodes.has(c)))];
 }

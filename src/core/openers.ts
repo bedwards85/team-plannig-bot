@@ -8,20 +8,26 @@ export type Touchpoint = "plan" | "checkin" | "review";
  * instantly and can never misstate what is open.
  */
 export function opener(touchpoint: Touchpoint, person: Person, openItems: OkrRow[]): string {
-  const list = openItems
-    .map((t) => `- ${t.name} (KR ${t.krCode}${t.due ? `, due ${shortDate(t.due)}` : ""})`)
-    .join("\n");
+  const line = (t: OkrRow) => `- ${t.name} (KR ${t.krCode}${t.due ? `, due ${shortDate(t.due)}` : ""})`;
 
   switch (touchpoint) {
     case "plan":
       if (openItems.length === 0) {
         return `Hi ${person.name}, new week. Let's sketch it out together. What's on your plate this week?`;
       }
+      if (openItems.length === 1) {
+        return [
+          `Hi ${person.name}, new week. Let's sketch it out together.`,
+          `This is still in progress on the tracker:`,
+          line(openItems[0]!),
+          `Do you plan to finish this off this week?`,
+        ].join("\n");
+      }
       return [
         `Hi ${person.name}, new week. Let's sketch it out together.`,
-        `These are still open on the tracker:`,
-        list,
-        `Do you plan to finish these off this week, or is something else more pressing?`,
+        `These are still in progress on the tracker:`,
+        ...openItems.map(line),
+        `Which of these do you plan to finish off this week?`,
       ].join("\n");
     case "checkin":
       return `Hi ${person.name}, quick mid-week check-in. How are things going with this week's plan?`;
