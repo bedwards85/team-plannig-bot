@@ -22,6 +22,8 @@ cp .env.example .env              # then open .env and paste your key after ANTH
 npm run chat -- --as amara        # chat as one of the sample team members
 ```
 
+On Windows PowerShell, run each command on its own line from inside the project folder (Windows PowerShell 5.1 doesn't accept `&&` between commands), and use `Copy-Item .env.example .env` then `notepad .env` instead of `cp`.
+
 Answer the opener about your open items, then say what you want to be true by Friday. You should get one short question at a time: who gets each piece of work and when, and what could block it. It ends with a one-line-per-outcome recap, each line with its KR (or "(no KR)"), and the line "If anything's off or too much, say what to change. Otherwise type /done." After each reply a grey line shows how long the first words took and whether the prompt cache was used. Type `/done` (or press Ctrl+C) to finish.
 
 Other options:
