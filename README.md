@@ -57,7 +57,7 @@ Every run uses the same simulated Monday (5 Oct 2026), so results don't depend o
 
 Jev, from TypeSafe AI, answers yes/no questions about a piece of text in well under a second, for a tiny fraction of a cent. It writes no text, so it **cannot make the coach's first words appear sooner**, and the chat is already cheap (about $5–15 a month for the team). People get through planning faster because the coach now asks fewer questions. Jev earns its place in two narrower jobs:
 
-1. **A quick check while improving the coach prompt.** `npm run eval -- --judge jev` checks every coach reply for five things: did the coach do the task itself, go below the top level, ask more than one thing, fill in an outcome the person never gave, and did customer or suspect details appear. The Jev part costs about a tenth of a cent a run. Opus stays the judge for the real pass/fail (`--judge opus`, the default); `--judge both` runs both and reports how often they agree.
+1. **A quick check while improving the coach prompt.** `npm run eval -- --judge jev` checks every coach reply for five things: did the coach do the task itself, go below the top level, ask more than one thing, fill in an outcome the person never gave, and did customer or suspect details appear. The Jev part costs about a tenth of a cent a run. Only the checks that have passed `npm run jev:eval` (below) can fail a chat; until then Jev's flags are shown as hints. Opus stays the judge for the real pass/fail (`--judge opus`, the default); `--judge both` runs both and reports how often they agree.
 2. **Later, a background quality monitor** (Phase 5, and only if the data-protection officer approves TypeSafe AI, which is hosted in the US). It would check replies after they are sent, never hold one back, and never make a decision about a person.
 
 Jev can't be fine-tuned. "Tuning" means rewording its questions (`eval/jev-questions.json`), recalibrating its probabilities against our own labels, and setting a threshold per check (the probability above which a reply counts as flagged). Before trusting it, check it against labelled examples. Everything below uses the fictional sample team:
@@ -75,21 +75,21 @@ npm run jev:label -- --repeat-check 100
 npm run jev:eval
 ```
 
-Aim for about 500 labelled replies: `jev:label` prints the count and how many of each check came out "yes" (each needs roughly 30–40%). It also refuses transcripts that weren't made with the sample team and tracker. Labelling costs roughly $10–20 for 500 replies.
+Aim for about 500 labelled replies: `jev:label` prints the count and how many of each check came out "yes" (each needs roughly 30–40%). It refuses transcripts that weren't made with the sample team and tracker, including runs made before this check existed: make fresh ones instead. Labelling costs roughly $10–20 for 500 replies.
 
-The first `jev:eval` creates `data/jev-gold/human-labels.csv` with 100 replies: 70 where Jev and Opus disagreed most clearly, spread across the five checks, and 30 picked at random, mixed together so you can't tell which is which. Open it in Excel, put Y or N in each check column (leave a cell blank if unsure), save it as CSV UTF-8 and run `npm run jev:eval` again. Your labels win over Opus's. Later runs only read the sheet; `npm run jev:eval -- --more-labels` adds another 100. Rows are only ever added, never changed.
+The first `jev:eval` creates `data/jev-gold/human-labels.csv` with 100 replies, each with the conversation before it: up to 70 where Jev and Opus disagreed most clearly, spread across the five checks, and the rest picked at random from all the labelled replies, mixed together so you can't tell which is which. Each row has a code instead of a name, so nothing hints at the answer. Open it in Excel, put Y or N in each check column (leave a cell blank if unsure), save it as CSV UTF-8 and run `npm run jev:eval` again. Your labels win over Opus's. Later runs only read the sheet; `npm run jev:eval -- --more-labels` adds another 100. Rows are only ever added, never changed.
 
 | Check, per flag | Pass mark |
 |---|---|
-| Recall: share of real cases Jev catches | 0.90 or more |
+| Recall: share of real cases Jev catches (its threshold is set to catch 95% on the tuning replies, so it should hold 90% on new ones) | 0.90 or more |
 | Precision: share of Jev's flags that are right | 0.60 or more |
 | AUROC: how well its probabilities rank real cases above the rest | 0.85 or more |
 | Calibration error after recalibration | 0.10 or less |
 | Labels | at least 150 |
-| Flip rate: the same reply asked 30 times changes its answer (`--repeats 30 --sample 50`, on by default) | 5% or less |
+| Flip rate: the same reply asked 30 more times changes its answer (`--repeats 30 --sample 50`, on by default; at least 30 replies must be compared, or the result is "incomplete") | 5% or less |
 | Your labels vs Opus's, on the 30 random rows (once 30 are labelled) | agree 80% or more, otherwise the check shows "labels untrustworthy" and its definition needs tightening |
 
-It also reports speed (median, 95th percentile, and how many calls took over 2 seconds, the monitor's time limit). Each run with enough labels writes `eval/jev-calibration.json`, which `npm run eval -- --judge jev` then uses. To see whether Jev does better with the whole conversation than with the last four turns, run `npm run jev:eval -- --context-turns 0 --no-write`; if it scores better, run it again without `--no-write` so the calibration switches to it. Like `jev:label`, it refuses transcripts that weren't made with the sample team and tracker unless you add `--allow-real-data`.
+It also reports speed (median, 95th percentile, and how many calls took over 2 seconds, the monitor's time limit). Each run with enough labels writes `eval/jev-calibration.json`, which `npm run eval -- --judge jev` then uses (if Jev failed to answer more than 5% of replies, the existing file is kept and you just rerun later). To see whether Jev does better with the whole conversation than with the last four turns, run `npm run jev:eval -- --context-turns 0 --no-write`; if it scores better, run it again without `--no-write` so the calibration switches to it. Like `jev:label`, it leaves out any reply it can't prove came from the sample team and tracker. `--allow-real-data` is only for real team data, and only after the data-protection officer has agreed.
 
 ## Using your real team and OKRs
 
