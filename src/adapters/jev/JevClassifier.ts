@@ -23,9 +23,20 @@ export const JevQuestionsSchema = z.object({
 });
 export type JevQuestions = z.infer<typeof JevQuestionsSchema>;
 
+/** What npm run jev:eval concluded about a flag: "pass" only when it met every bar, the repeat test included. */
+export const FLAG_VERDICTS = ["pass", "fail"] as const;
+export type FlagVerdict = (typeof FLAG_VERDICTS)[number];
+
 const FlagCalibrationSchema = z.object({
   threshold: z.number().min(0).max(1),
   isotonic: z.array(z.tuple([z.number(), z.number(), z.number()])),
+  /**
+   * The flag's result in the jev:eval run that wrote the file. The coach eval lets Jev fail a
+   * chat only on flags marked "pass"; "fail" (or no status, in files made before it was
+   * recorded) means Jev's hits on that flag are shown as hints only. "fail" covers anything
+   * short of a full pass, including a repeat test that wasn't run or was too small.
+   */
+  status: z.enum(FLAG_VERDICTS).optional(),
 });
 
 /** Written by `npm run jev:eval`: per-flag recalibration and thresholds, valid for one model and question version. */
@@ -143,6 +154,16 @@ export class JevClassifier implements ClassifierPort {
 
   thresholdFor(flag: ReplyFlag): number {
     return this.calibration?.flags[flag]?.threshold ?? DEFAULT_THRESHOLD;
+  }
+
+  /**
+   * True only when the calibration in use says npm run jev:eval passed this flag. False with
+   * no calibration, one set aside (other questions or another model), or a flag that failed
+   * or was never checked: Jev's answers on such a flag haven't been shown to be good enough
+   * to fail a coach chat on their own.
+   */
+  validated(flag: ReplyFlag): boolean {
+    return this.calibration?.flags[flag]?.status === "pass";
   }
 
   async flagReply(exchange: ReplyExchange, signal?: AbortSignal): Promise<FlagResult | null> {

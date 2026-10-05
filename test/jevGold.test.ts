@@ -9,6 +9,7 @@ import {
   LABEL_PROMPT_PATH,
   RunRefusedError,
   appendGold,
+  finishRelabelCommand,
   flagDefinitions,
   formatPositiveRates,
   interleave,
@@ -70,7 +71,7 @@ describe("itemsFromRun", () => {
     expect(items.map((i) => i.id)).toEqual(["eval-x:clear-planner:2", "eval-x:clear-planner:4"]);
     expect(items[0]).toEqual({
       id: "eval-x:clear-planner:2",
-      source: { run: "eval-x", persona: "clear-planner", line: 2, coachPrompt: "eval/bad-coach/interrogator.md" },
+      source: { run: "eval-x", persona: "clear-planner", line: 2, coachPrompt: "eval/bad-coach/interrogator.md", sampleData: true },
       context: [
         "COACH: Hi Thabo, new week. Which of these do you plan to finish off this week?",
         "PERSON: The mapping.",
@@ -100,19 +101,39 @@ describe("itemsFromRun", () => {
       expect((error as RunRefusedError).reason).toBe("not-sample-data");
     }
     expect(itemsFromRun(run(data), "eval-x", { allowRealData: true })).toHaveLength(2);
+    // The message says what --allow-real-data is for, without inviting it.
+    expect(() => itemsFromRun(run(data), "eval-x", { allowRealData: false })).toThrow(/real team data, and only after the data-protection officer has agreed/);
     // The sample team with a real tracker is refused too.
     const realTracker = { ...sampleData, trackerPath: "fixtures/q4-tracker.json" };
     expect(() => itemsFromRun(run(realTracker), "eval-x", { allowRealData: false })).toThrow(RunRefusedError);
   });
 
-  it("refuses a run too old to say which data it used, with what to do next", () => {
+  it("refuses a run too old to say which data it used, suggesting a fresh run rather than --allow-real-data", () => {
     const old = run(null);
     expect(() => itemsFromRun(old, "eval-old", { allowRealData: false })).toThrow(
       /too old to know which team and tracker/,
     );
-    expect(() => itemsFromRun(old, "eval-old", { allowRealData: false })).toThrow(/--allow-real-data/);
+    expect(() => itemsFromRun(old, "eval-old", { allowRealData: false })).toThrow(/Make a fresh run instead \(npm run eval -- --judge none --only personas; it is cheap\)/);
+    expect(() => itemsFromRun(old, "eval-old", { allowRealData: false })).not.toThrow(/allow-real-data/);
     const items = itemsFromRun(old, "eval-old", { allowRealData: true });
     expect(items[0]!.source).toMatchObject({ coachPrompt: "unknown" });
+  });
+
+  it("records whether each reply's run used the sample data, so replies let in with --allow-real-data are marked", () => {
+    expect(itemsFromRun(run(), "eval-x", { allowRealData: false }).map((i) => i.source)).toEqual([
+      expect.objectContaining({ sampleData: true }),
+      expect.objectContaining({ sampleData: true }),
+    ]);
+    // The run's own "sampleData" field isn't trusted: the paths decide.
+    const real = { ...sampleData, teamConfigPath: "config/team.local.yaml", sampleData: true };
+    expect(itemsFromRun(run(real), "eval-x", { allowRealData: true })[0]!.source).toMatchObject({ sampleData: false });
+    expect(itemsFromRun(run(null), "eval-old", { allowRealData: true })[0]!.source).toMatchObject({ sampleData: false });
+  });
+
+  it("reads gold files made before sampleData was recorded", () => {
+    const old = { run: "eval-x", persona: "p", line: 2, coachPrompt: "prompts/coach.md" };
+    const item = { id: "eval-x:p:2", source: old, context: [], reply: "r", labels: noFlags, ...meta };
+    expect(GoldItemSchema.parse(item).source).toEqual(old);
   });
 
   it("explains a file that is not an eval run", () => {
@@ -185,6 +206,15 @@ describe("choosing what to label", () => {
 
   it("newItems skips ids already labelled and repeats", () => {
     expect(newItems([item("a"), item("b"), item("a"), item("c")], ["b"]).map((i) => i.id)).toEqual(["a", "c"]);
+  });
+
+  it("finishRelabelCommand gives the same command without --relabel or --limit", () => {
+    expect(finishRelabelCommand(["--relabel"])).toBe("npm run jev:label");
+    expect(finishRelabelCommand(["--relabel", "--limit", "50"])).toBe("npm run jev:label");
+    expect(finishRelabelCommand(["data/eval/eval-x.json", "--limit=20", "--relabel", "--gold", "data/jev-gold/other.jsonl"])).toBe(
+      "npm run jev:label -- data/eval/eval-x.json --gold data/jev-gold/other.jsonl",
+    );
+    expect(finishRelabelCommand(["--relabel", "data/eval/my run.json"])).toBe("npm run jev:label -- 'data/eval/my run.json'");
   });
 
   it("interleave takes one from each group in turn", () => {

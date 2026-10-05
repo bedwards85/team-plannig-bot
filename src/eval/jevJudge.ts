@@ -74,28 +74,83 @@ const FAILURE_TEXT: Record<Exclude<ReplyFlag, "third_party_details">, string> = 
   filled_in_outcome: "filled in an outcome, recipient or deadline the person never gave",
 };
 
+/** The flags that can fail a chat in jev mode, in the standard order. */
+export const JEV_JUDGE_FLAGS = Object.keys(FAILURE_TEXT) as Array<keyof typeof FAILURE_TEXT>;
+
+/** Start of a hint line: Jev flagged something on a check jev:eval hasn't validated. */
+export const JEV_HINT_PREFIX = "jev hint, not validated by jev:eval";
+
 export interface JevChatResult {
-  /** Plain-English failures, one per failing flag, plus an "inconclusive" line if Jev missed replies. */
+  /** Plain-English failures, one per failing validated flag, plus an "inconclusive" line if Jev missed replies. */
   failures: string[];
-  /** Replies Jev could not answer. Any at all makes the chat inconclusive in jev mode. */
+  /** The same lines for flags jev:eval hasn't validated: shown, but they never fail a chat. */
+  hints: string[];
+  /** Replies Jev could not answer. */
   unanswered: number;
+  /** True when Jev missed a reply and some flag relied on: a missed reply could hide a failure. */
+  inconclusive: boolean;
   /** Replies flagged for customer or suspect details: reported only. */
   thirdPartyReplies: number;
 }
 
-/** Pass/fail lines for one chat when Jev is the judge. */
-export function jevFailures(records: JevReplyFlags[]): JevChatResult {
+/** Replies Jev flagged for customer or suspect details. Reported in every mode, never a failure. */
+export function thirdPartyReplyCount(records: readonly JevReplyFlags[]): number {
+  return records.filter((r) => r.flagged.includes("third_party_details")).length;
+}
+
+/**
+ * Pass/fail lines for one chat when Jev is the judge. Only flags npm run jev:eval has
+ * validated can fail the chat; hits on the others become hints, so an unproven check can
+ * neither fail a chat nor be mistaken for a clean one. A reply Jev couldn't answer makes the
+ * chat inconclusive only when some flag is relied on, as otherwise Jev decides nothing.
+ */
+export function jevFailures(records: JevReplyFlags[], validated: (flag: ReplyFlag) => boolean): JevChatResult {
   const failures: string[] = [];
-  for (const [flag, text] of Object.entries(FAILURE_TEXT) as Array<[ReplyFlag, string]>) {
+  const hints: string[] = [];
+  for (const flag of JEV_JUDGE_FLAGS) {
     const hits = records
       .filter((r) => r.flagged.includes(flag))
       .map((r) => `reply ${replyNumber(r.line)}, p=${r.probabilities![flag].toFixed(2)}`);
-    if (hits.length) failures.push(`jev: ${text} (${hits.join("; ")})`);
+    if (!hits.length) continue;
+    const text = `${FAILURE_TEXT[flag]} (${hits.join("; ")})`;
+    if (validated(flag)) failures.push(`jev: ${text}`);
+    else hints.push(`${JEV_HINT_PREFIX}: ${text}`);
   }
   const unanswered = records.filter((r) => r.probabilities === null).length;
-  if (unanswered) failures.push(`inconclusive: Jev could not answer ${unanswered} of ${records.length} replies`);
-  const thirdPartyReplies = records.filter((r) => r.flagged.includes("third_party_details")).length;
-  return { failures, unanswered, thirdPartyReplies };
+  const inconclusive = unanswered > 0 && JEV_JUDGE_FLAGS.some(validated);
+  if (inconclusive) failures.push(`inconclusive: Jev could not answer ${unanswered} of ${records.length} replies`);
+  return { failures, hints, unanswered, inconclusive, thirdPartyReplies: thirdPartyReplyCount(records) };
+}
+
+/** The flags jev mode relies on, as a phrase: "did_task and several_asks", or "no checks". */
+export function reliedOnText(flags: readonly ReplyFlag[]): string {
+  if (flags.length === 0) return "no checks";
+  return flags.length === 1 ? flags[0]! : `${flags.slice(0, -1).join(", ")} and ${flags.at(-1)}`;
+}
+
+/**
+ * Notes for a jev-mode run on which checks Jev may fail a chat on. Only flags whose result in
+ * the calibration file is "pass" count; the rest are named, so nobody reads a pass as clean.
+ */
+export function jevValidationNotes(args: {
+  /** False when eval/jev-calibration.json doesn't exist. */
+  calibrationFound: boolean;
+  validated: (flag: ReplyFlag) => boolean;
+  calibrationPath: string;
+}): string[] {
+  if (!args.calibrationFound) {
+    return [
+      `There is no ${args.calibrationPath} yet, so none of Jev's checks has been validated by npm run jev:eval. ` +
+        "Jev's flags are shown as hints and no chat fails on them; only the rule checks decide. Run npm run jev:eval first.",
+    ];
+  }
+  const unvalidated = JEV_JUDGE_FLAGS.filter((f) => !args.validated(f));
+  if (unvalidated.length === 0) return [];
+  return [
+    `Not validated by npm run jev:eval, so shown as hints that never fail a chat: ${reliedOnText(unvalidated)}. ` +
+      `${args.calibrationPath} doesn't mark ${unvalidated.length === 1 ? "it" : "them"} as passed ` +
+      "(it failed a bar or the repeat test there, the file was made before jev:eval recorded each check's result, or it is for other questions or another Jev model).",
+  ];
 }
 
 /** Jev flags that match a judge criterion. The judge's field is true when the coach did well. */
@@ -143,7 +198,7 @@ export function formatAgreement(agreement: JevAgreement): string {
  * was dropped.
  */
 export function jevRunRecord(
-  jev: Pick<JevClassifier, "questionsVersion" | "contextTurns" | "thresholdFor" | "notes">,
+  jev: Pick<JevClassifier, "questionsVersion" | "contextTurns" | "thresholdFor" | "validated" | "notes">,
   stats: { model: string | null; inputTokens: number; replies: number; unanswered: number },
 ) {
   return {
@@ -152,6 +207,8 @@ export function jevRunRecord(
     /** Earlier turns sent with each reply; 0 = the whole conversation. */
     contextTurns: jev.contextTurns,
     thresholds: Object.fromEntries(REPLY_FLAGS.map((f) => [f, jev.thresholdFor(f)])) as Record<ReplyFlag, number>,
+    /** Flags jev:eval passed, which jev mode lets fail a chat; hits on the others were hints only. */
+    validatedFlags: REPLY_FLAGS.filter((f) => jev.validated(f)),
     notes: [...jev.notes],
     inputTokens: stats.inputTokens,
     replies: stats.replies,

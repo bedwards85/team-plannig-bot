@@ -12,21 +12,27 @@
  *   both  Opus decides pass/fail as usual; Jev's per-reply flags are recorded too, and the
  *         results say how often Jev and Opus agree. For checking Jev against Opus.
  *   jev   no Opus call: Jev's per-reply flags decide the judge part (did the task, below the
- *         top level, more than one ask, filled-in outcome). A quick, cheap check while
- *         iterating on the coach prompt, never a release result.
+ *         top level, more than one ask, filled-in outcome), but only for the checks npm run
+ *         jev:eval has passed (marked "pass" in eval/jev-calibration.json). Jev's hits on the
+ *         other checks are listed as hints and never fail a chat, and the results say which
+ *         checks were relied on. A quick, cheap check while iterating on the coach prompt,
+ *         never a release result.
  *   none  no judge, rule checks only (one ask, 80 words, real KR codes, wrap-up, budget).
  *         The cheap way to make transcripts for the Jev gold set (npm run jev:label).
  * jev and both need TYPESAFE_API_KEY in .env. They send transcripts to a US-hosted service,
- * so they refuse a team or tracker other than the fictional sample unless given --allow-real-data.
+ * so they refuse a team or tracker other than the fictional sample unless given --allow-real-data
+ * (for real team data, and only after the data-protection officer has agreed).
  *
  *   --coach-prompt <path>  run with another coach prompt, such as the deliberately flawed ones
  *                          in eval/bad-coach/. Only for building the Jev gold set, never a release check.
  *
  * Pass criteria (from the plan):
  *   1. at least 90% of the scripted personas pass (12 of 13): every coach reply asks one thing and is
- *      80 words at most, uses only real KR codes, and the judge finds the coach never did the
- *      task, kept a coaching tone, stayed at the top level, framed done as a handover, asked about
- *      blockers and linked a fitting KR (where the persona expects it)
+ *      80 words at most and uses only real KR codes; the chat reaches the wrap-up within the
+ *      question budget (2 coach replies per outcome + 2, +1 per carry-over after the first); and
+ *      the judge finds the coach never did the task, kept a coaching tone, stayed at the top level,
+ *      framed done as a handover, asked about blockers and linked a fitting KR (where the persona
+ *      expects each of these)
  *   2. 0 refusals across 20 fraud-vocabulary planning messages
  *   3. median time to first text of 2.0 s or less over at least 30 replies, timed from the
  *      person's message and including any retry (measured from this machine, not the hosted bot)
@@ -51,8 +57,10 @@ import { checkReply, isWrapUp, recapOutcomeCount, type ReplyCheck } from "../src
 import type { Clock } from "../src/core/time.js";
 import { activeRows, findPerson } from "../src/domain/okr.js";
 import { PersonasFileSchema, RefusalFileSchema, type Persona, type RefusalPrompt } from "../src/domain/schemas.js";
+import type { ReplyFlag } from "../src/ports/classifier.js";
 import type { TurnUsage } from "../src/ports/llm.js";
 import {
+  JEV_JUDGE_FLAGS,
   JUDGE_MODES,
   coachReplyLines,
   formatAgreement,
@@ -60,7 +68,10 @@ import {
   jevCost,
   jevFailures,
   jevRunRecord,
+  jevValidationNotes,
   parseJudgeMode,
+  reliedOnText,
+  thirdPartyReplyCount,
   toReplyFlags,
   usesJev,
   usesOpus,
@@ -138,27 +149,33 @@ const JEV_CONCURRENCY = 4;
 /** How long the planned live monitor will wait for Jev; slower answers are counted. */
 const JEV_MONITOR_TIMEOUT_MS = 2_000;
 
+/** Whether eval/jev-calibration.json existed when Jev was set up: without it no check is validated. */
+let jevCalibrationFound = false;
+
 function setUpJev(): JevClassifier {
   if (!hasJevCredentials()) {
     fail(
       `--judge ${judgeMode} needs a Jev key. Add a line TYPESAFE_API_KEY=<your key> to the .env file ` +
-        "in this folder (see .env.example), then run this again. Or use --judge opus.",
+        "in this folder (see .env.example). If the line is already there, make sure it doesn't start with #. " +
+        "Then run this again, or use --judge opus.",
     );
   }
   if (!sampleData && !values["allow-real-data"]) {
     fail(
       `--judge ${judgeMode} sends transcripts to Jev (TypeSafe AI, hosted in the US), but this run uses ` +
         `${settings.teamConfigPath} and ${settings.trackerPath} rather than the fictional sample team and tracker. ` +
-        "Unset TEAM_CONFIG and TRACKER_FIXTURE in .env to use the sample, or add --allow-real-data " +
-        "only once the data protection officer has agreed.",
+        "Unset TEAM_CONFIG and TRACKER_FIXTURE in .env to use the sample. --allow-real-data is for real team data, " +
+        "and only after the data-protection officer has agreed.",
     );
   }
   try {
     // No contextTurns: Jev reads as many earlier turns as the calibration was made with
     // (npm run jev:eval records it; the last 4 without a calibration), so its thresholds fit.
+    const calibration = loadJevCalibration();
+    jevCalibrationFound = calibration !== null;
     return new JevClassifier({
       questions: loadJevQuestions(),
-      calibration: loadJevCalibration(),
+      calibration,
       timeoutMs: 10_000,
     });
   } catch (error) {
@@ -235,6 +252,10 @@ interface PersonaResult {
   budget: number | null;
   /** Jev's flags for each coach reply after the opener, or null when Jev is off (or the chat crashed). */
   jevFlags: JevReplyFlags[] | null;
+  /** jev mode: the checks Jev could fail this chat on (validated by jev:eval); null in other modes. */
+  jevReliedOn: ReplyFlag[] | null;
+  /** jev mode: Jev's hits on checks jev:eval hasn't validated. Shown, never a failure. */
+  jevHints: string[];
   transcript: ChatLine[];
 }
 
@@ -269,6 +290,8 @@ async function runPersona(p: Persona): Promise<PersonaResult> {
   let outcomes = 0;
   let budget: number | null = null;
   let jevFlags: JevReplyFlags[] | null = null;
+  let jevReliedOn: ReplyFlag[] | null = null;
+  const jevHints: string[] = [];
 
   try {
     for (let turn = 0; turn < p.maxTurns; turn++) {
@@ -351,11 +374,15 @@ async function runPersona(p: Persona): Promise<PersonaResult> {
           failures.push("inconclusive: simulated person never asked the coach to do the work");
         }
       }
-    } else if (judgeMode === "jev" && jevFlags) {
-      // Jev stands in for the judge on four checks; Opus's other checks are skipped.
-      const graded = jevFailures(jevFlags);
+    } else if (judgeMode === "jev" && jev && jevFlags) {
+      // Jev stands in for the judge, but only on the checks jev:eval validated; its hits on
+      // the others are hints. Opus's other checks are skipped.
+      const validated = (flag: ReplyFlag) => jev.validated(flag);
+      const graded = jevFailures(jevFlags, validated);
       failures.push(...graded.failures);
-      if (graded.unanswered) inconclusive = true;
+      jevHints.push(...graded.hints);
+      jevReliedOn = JEV_JUDGE_FLAGS.filter(validated);
+      if (graded.inconclusive) inconclusive = true;
     }
   } catch (error) {
     if (error instanceof SimulatorError) inconclusive = true;
@@ -373,6 +400,8 @@ async function runPersona(p: Persona): Promise<PersonaResult> {
     outcomes,
     budget,
     jevFlags,
+    jevReliedOn,
+    jevHints,
     transcript: lines,
   };
 }
@@ -419,11 +448,11 @@ if (unknown.length) fail(`Unknown persona id(s): ${unknown.join(", ")}. Known: $
 if (wanted.length) personas = personas.filter((p) => wanted.includes(p.id));
 const refusalPrompts = RefusalFileSchema.parse(JSON.parse(loadText("eval/refusal-prompts.json"))).prompts;
 
-/** How each judge mode is described in the header and on the Personas line. */
+/** How each judge mode is described in the header. The Personas line says which Jev checks were relied on. */
 const JUDGE_TEXT: Record<JudgeMode, string> = {
   opus: `judged by Opus (${JUDGE_MODEL})`,
   both: `judged by Opus (${JUDGE_MODEL}), with Jev's flags recorded alongside`,
-  jev: "judged by Jev: a quick check, not a release result",
+  jev: "judged by Jev, on the checks npm run jev:eval has validated: a quick check, not a release result",
   none: "no judge: rule checks only",
 };
 
@@ -443,7 +472,8 @@ if (runPersonas) {
       const r = await runPersona(p);
       const mark = r.pass ? "✓" : r.inconclusive ? "?" : "✗";
       const pace = r.repliesToWrapUp === null ? "no wrap-up" : `wrap-up after ${r.repliesToWrapUp} (budget ${r.budget})`;
-      console.log(`  ${mark} ${r.id} · ${pace}${r.pass ? "" : `: ${r.failures.join("; ")}`}`);
+      const hints = r.jevHints.length ? ` · ${r.jevHints.join("; ")}` : "";
+      console.log(`  ${mark} ${r.id} · ${pace}${r.pass ? "" : `: ${r.failures.join("; ")}`}${hints}`);
       return r;
     })),
   );
@@ -480,12 +510,28 @@ const medianToWrapUp = percentile(wrapped.map((r) => r.repliesToWrapUp!), 50);
 const fmt = (ms: number | null) => (ms === null ? "n/a" : `${(ms / 1000).toFixed(2)} s`);
 const split = (first: boolean) => fmt(percentile(latency.filter((s) => s.firstReply === first).map((s) => s.ms), 50));
 const agreement = judgeMode === "both" ? jevAgreement(personaResults) : null;
+/**
+ * jev mode: the checks Jev was allowed to fail chats on, from the chats themselves (a
+ * calibration made for another Jev model is dropped once that model answers).
+ */
+const jevReliedOn: ReplyFlag[] =
+  jev && judgeMode === "jev"
+    ? personaResults.some((r) => r.jevReliedOn)
+      ? JEV_JUDGE_FLAGS.filter((f) => personaResults.some((r) => r.jevReliedOn?.includes(f)))
+      : JEV_JUDGE_FLAGS.filter((f) => jev.validated(f))
+    : [];
+const jevJudgeText = jevReliedOn.length
+  ? `judged by Jev on ${reliedOnText(jevReliedOn)}: a quick check, not a release result`
+  : "judged by Jev on no checks (none validated by npm run jev:eval), so rule checks only: not a release result";
 console.log("\n──────── Results ────────");
-if (runPersonas && judgeMode === "jev") {
+if (runPersonas && judgeMode === "jev" && jev) {
   console.log(
     "Judge: Jev, which checks each reply for four things: did the task, went below the top level, asked more than " +
-      "one thing, filled in an outcome. Opus's tone, blocker, KR link, handover and steer-back checks were skipped.",
+      `one thing, filled in an outcome. Only checks npm run jev:eval has validated can fail a chat: this run relied on ${reliedOnText(jevReliedOn)}. ` +
+      "Opus's tone, blocker, KR link, handover and steer-back checks were skipped.",
   );
+  const notes = jevValidationNotes({ calibrationFound: jevCalibrationFound, validated: (f) => jev.validated(f), calibrationPath: JEV_CALIBRATION_PATH });
+  for (const note of notes) console.log(`Jev note: ${note}`);
 }
 if (runPersonas && judgeMode === "none") {
   console.log("No judge: only the rule checks ran (one ask, 80 words, real KR codes, wrap-up, budget).");
@@ -496,18 +542,18 @@ if (runPersonas) {
   const inc = inconclusiveCount ? ` · ${inconclusiveCount} inconclusive (${why}; rerun with --persona)` : "";
   console.log(
     `${personaOk ? "PASS" : "FAIL"}  Personas: ${personasPassed}/${personaResults.length} passed (need ${personaTarget})` +
-      ` · ${JUDGE_TEXT[judgeMode]}${inc}`,
+      ` · ${judgeMode === "jev" ? jevJudgeText : JUDGE_TEXT[judgeMode]}${inc}`,
   );
   console.log(
     `      wrap-up reached in ${wrapped.length}/${personaResults.length} chats · median ${medianToWrapUp ?? "n/a"} coach replies to wrap up` +
-      ` · within budget in ${withinBudget}/${wrapped.length} (2 per outcome + 2)`,
+      ` · within budget in ${withinBudget}/${wrapped.length} (2 per outcome + 2, +1 per carry-over after the first)`,
   );
 }
 if (jev) {
   const records = personaResults.flatMap((r) => r.jevFlags ?? []);
   const jevMs = records.flatMap((r) => (r.ms === null ? [] : [r.ms]));
   const slow = jevMs.filter((ms) => ms > JEV_MONITOR_TIMEOUT_MS).length;
-  const thirdParty = jevFailures(records).thirdPartyReplies;
+  const thirdParty = thirdPartyReplyCount(records);
   console.log(
     `      Jev: ${jevStats.replies - jevStats.unanswered}/${jevStats.replies} replies checked` +
       `${jevStats.unanswered ? ` (${jevStats.unanswered} unanswered)` : ""}` +
@@ -545,7 +591,7 @@ const allOk = personaOk && refusalOk && latencyOk;
 /** Runs that can't count as a release check say so on the Overall line. */
 const caveats = [
   ...(otherCoachPrompt ? [`different coach prompt ${coachPromptPath}: for building the Jev gold set, not a release check`] : []),
-  ...(runPersonas && judgeMode === "jev" ? ["judged by Jev: a quick check, not a release result"] : []),
+  ...(runPersonas && judgeMode === "jev" ? [jevJudgeText] : []),
   ...(runPersonas && judgeMode === "none" ? ["no judge: rule checks only, not a release result"] : []),
 ];
 console.log(`\nOverall: ${allOk ? "PASS" : "FAIL"}${caveats.length ? ` (${caveats.join("; ")})` : ""}`);

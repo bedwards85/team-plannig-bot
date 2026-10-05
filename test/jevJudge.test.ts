@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  JEV_JUDGE_FLAGS,
   coachReplyLines,
   flaggedFlags,
   formatAgreement,
@@ -7,8 +8,11 @@ import {
   jevCost,
   jevFailures,
   jevRunRecord,
+  jevValidationNotes,
   parseJudgeMode,
+  reliedOnText,
   replyNumber,
+  thirdPartyReplyCount,
   toReplyFlags,
   usesJev,
   usesOpus,
@@ -33,6 +37,9 @@ function reply(line: number, overrides: Partial<FlagProbabilities> = {}): JevRep
   return { line, probabilities, flagged: flaggedFlags(probabilities, half), ms: 300 };
 }
 const unanswered = (line: number): JevReplyFlags => ({ line, probabilities: null, flagged: [], ms: null });
+/** Every check validated by jev:eval, as when every flag passed. */
+const allValidated = () => true;
+const noneValidated = () => false;
 
 const goodVerdict: Verdict = {
   never_does_task: true,
@@ -101,38 +108,64 @@ describe("jevFailures", () => {
   });
 
   it("passes a clean chat", () => {
-    expect(jevFailures([reply(2), reply(4)])).toEqual({ failures: [], unanswered: 0, thirdPartyReplies: 0 });
+    expect(jevFailures([reply(2), reply(4)], allValidated)).toEqual({ failures: [], hints: [], unanswered: 0, inconclusive: false, thirdPartyReplies: 0 });
   });
 
   it("writes one plain-English line per failing flag, naming each reply and its probability", () => {
-    const result = jevFailures([
-      reply(2, { several_asks: 0.7 }),
-      reply(4),
-      reply(6, { did_task: 0.83, several_asks: 0.91 }),
-      reply(8, { below_top_level: 0.6, filled_in_outcome: 0.55 }),
-    ]);
+    const result = jevFailures(
+      [
+        reply(2, { several_asks: 0.7 }),
+        reply(4),
+        reply(6, { did_task: 0.83, several_asks: 0.91 }),
+        reply(8, { below_top_level: 0.6, filled_in_outcome: 0.55 }),
+      ],
+      allValidated,
+    );
     expect(result.failures).toEqual([
       "jev: did the task (reply 3, p=0.83)",
       "jev: went below the top level (reply 4, p=0.60)",
       "jev: asked more than one thing (reply 1, p=0.70; reply 3, p=0.91)",
       "jev: filled in an outcome, recipient or deadline the person never gave (reply 4, p=0.55)",
     ]);
+    expect(result.hints).toEqual([]);
+  });
+
+  it("fails a chat only on flags jev:eval validated; hits on the others are hints that never fail it", () => {
+    const records = [reply(2, { did_task: 0.83 }), reply(4, { several_asks: 0.7, below_top_level: 0.6 })];
+    const result = jevFailures(records, (flag) => flag === "several_asks");
+    expect(result.failures).toEqual(["jev: asked more than one thing (reply 2, p=0.70)"]);
+    expect(result.hints).toEqual([
+      "jev hint, not validated by jev:eval: did the task (reply 1, p=0.83)",
+      "jev hint, not validated by jev:eval: went below the top level (reply 2, p=0.60)",
+    ]);
+    const none = jevFailures(records, noneValidated);
+    expect(none.failures).toEqual([]);
+    expect(none.hints).toHaveLength(3);
   });
 
   it("reports customer or suspect details but never fails a chat for them", () => {
-    const result = jevFailures([reply(2, { third_party_details: 0.9 }), reply(4, { third_party_details: 0.95 })]);
+    const result = jevFailures([reply(2, { third_party_details: 0.9 }), reply(4, { third_party_details: 0.95 })], allValidated);
     expect(result.failures).toEqual([]);
+    expect(result.hints).toEqual([]);
     expect(result.thirdPartyReplies).toBe(2);
+    expect(thirdPartyReplyCount([reply(2, { third_party_details: 0.9 }), reply(4)])).toBe(1);
+    expect(JEV_JUDGE_FLAGS).toEqual(["did_task", "below_top_level", "several_asks", "filled_in_outcome"]);
   });
 
   it("counts replies Jev could not answer and says the chat is inconclusive", () => {
-    const result = jevFailures([reply(2), unanswered(4), unanswered(6)]);
+    const result = jevFailures([reply(2), unanswered(4), unanswered(6)], allValidated);
     expect(result.unanswered).toBe(2);
+    expect(result.inconclusive).toBe(true);
     expect(result.failures).toEqual(["inconclusive: Jev could not answer 2 of 3 replies"]);
   });
 
+  it("doesn't call a chat inconclusive for a missed reply when no flag is relied on, as Jev decides nothing then", () => {
+    const result = jevFailures([reply(2), unanswered(4)], noneValidated);
+    expect(result).toMatchObject({ failures: [], unanswered: 1, inconclusive: false });
+  });
+
   it("still lists real failures before the inconclusive line", () => {
-    const result = jevFailures([reply(2, { did_task: 0.9 }), unanswered(4)]);
+    const result = jevFailures([reply(2, { did_task: 0.9 }), unanswered(4)], allValidated);
     expect(result.failures).toEqual(["jev: did the task (reply 1, p=0.90)", "inconclusive: Jev could not answer 1 of 2 replies"]);
   });
 
@@ -141,7 +174,36 @@ describe("jevFailures", () => {
     const thresholds: Partial<Record<ReplyFlag, number>> = { did_task: 0.3, several_asks: 0.9 };
     const thresholdFor = (f: ReplyFlag) => thresholds[f] ?? 0.5;
     const result = { probabilities: { ...clean, did_task: 0.35, several_asks: 0.8 }, model: "jev-1", ms: 100, inputTokens: 300 };
-    expect(jevFailures([toReplyFlags(2, result, thresholdFor)]).failures).toEqual(["jev: did the task (reply 1, p=0.35)"]);
+    expect(jevFailures([toReplyFlags(2, result, thresholdFor)], allValidated).failures).toEqual(["jev: did the task (reply 1, p=0.35)"]);
+  });
+});
+
+describe("jevValidationNotes and reliedOnText", () => {
+  const path = "eval/jev-calibration.json";
+
+  it("says when there is no calibration file, so nothing is relied on", () => {
+    const notes = jevValidationNotes({ calibrationFound: false, validated: noneValidated, calibrationPath: path });
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(/no eval\/jev-calibration\.json yet/);
+    expect(notes[0]).toMatch(/hints and no chat fails on them/);
+    expect(notes[0]).toMatch(/npm run jev:eval/);
+  });
+
+  it("names the checks jev:eval hasn't validated", () => {
+    const notes = jevValidationNotes({ calibrationFound: true, validated: (f) => f === "did_task" || f === "several_asks", calibrationPath: path });
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(/^Not validated by npm run jev:eval, so shown as hints that never fail a chat: below_top_level and filled_in_outcome\./);
+  });
+
+  it("says nothing more when every check is validated", () => {
+    expect(jevValidationNotes({ calibrationFound: true, validated: allValidated, calibrationPath: path })).toEqual([]);
+  });
+
+  it("joins flag names in plain English", () => {
+    expect(reliedOnText([])).toBe("no checks");
+    expect(reliedOnText(["did_task"])).toBe("did_task");
+    expect(reliedOnText(["did_task", "several_asks"])).toBe("did_task and several_asks");
+    expect(reliedOnText(["did_task", "below_top_level", "several_asks"])).toBe("did_task, below_top_level and several_asks");
   });
 });
 
@@ -206,7 +268,7 @@ describe("jevRunRecord", () => {
     questionsVersion: questions.version,
     createdAt: "2026-10-05T09:00:00.000Z",
     ...(contextTurns === undefined ? {} : { contextTurns }),
-    flags: { did_task: { threshold: 0.35, isotonic: [] } },
+    flags: { did_task: { threshold: 0.35, isotonic: [], status: "pass" }, several_asks: { threshold: 0.6, isotonic: [], status: "fail" } },
   });
   /** Set up as scripts/eval.ts does: no contextTurns, so the calibration decides. No request is made. */
   const asEvalDoes = (cal: JevCalibration | null) => new JevClassifier({ questions, calibration: cal, timeoutMs: 10_000, apiKey: "test-key" });
@@ -221,13 +283,18 @@ describe("jevRunRecord", () => {
     expect(jevRunRecord(asEvalDoes(calibration()), stats).contextTurns).toBe(4);
   });
 
+  it("records no validated flags without a calibration", () => {
+    expect(jevRunRecord(asEvalDoes(null), stats).validatedFlags).toEqual([]);
+  });
+
   it("records the thresholds in use, the question version and the counts", () => {
     const record = jevRunRecord(asEvalDoes(calibration(0)), stats);
     expect(record).toEqual({
       questionsVersion: questions.version,
       model: "jev-test-1",
       contextTurns: 0,
-      thresholds: { did_task: 0.35, below_top_level: 0.5, several_asks: 0.5, filled_in_outcome: 0.5, third_party_details: 0.5 },
+      thresholds: { did_task: 0.35, below_top_level: 0.5, several_asks: 0.6, filled_in_outcome: 0.5, third_party_details: 0.5 },
+      validatedFlags: ["did_task"],
       notes: [],
       inputTokens: 1_200,
       replies: 3,

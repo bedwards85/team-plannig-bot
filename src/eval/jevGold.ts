@@ -27,7 +27,19 @@ export const GoldItemSchema = z.object({
   id: z.string(),
   /** Where the reply came from: an eval run (with the coach prompt it used) or the seed file. */
   source: z.union([
-    z.object({ run: z.string(), persona: z.string(), line: z.number().int(), coachPrompt: z.string() }),
+    z.object({
+      run: z.string(),
+      persona: z.string(),
+      line: z.number().int(),
+      coachPrompt: z.string(),
+      /**
+       * Whether the run used the fictional sample team and tracker, worked out from the run file
+       * when the reply was labelled. False for runs let in only by --allow-real-data (including
+       * runs too old to say). jev:eval sends a reply to Jev only if this is true, so the check
+       * still holds after the run file is gone. Missing from gold files made before it was kept.
+       */
+      sampleData: z.boolean().optional(),
+    }),
     z.object({ seed: z.string() }),
   ]),
   /** Turns before the reply, oldest first, as "COACH: …" / "PERSON: …". */
@@ -100,11 +112,20 @@ export class RunRefusedError extends Error {
   }
 }
 
+/** How to make fresh transcripts with the fictional sample team: cheap, as no judge is called. */
+export const FRESH_RUN_COMMAND = "npm run eval -- --judge none --only personas";
+
+/** What --allow-real-data is for, said the same way everywhere. */
+export const ALLOW_REAL_DATA_TEXT = "--allow-real-data is for real team data, and only after the data-protection officer has agreed";
+
 /**
  * Every coach reply in an eval run, ready to label: each coach line except the fixed opener
  * (line 0), with the turns before it. Labels go to Opus and, later, the replies go to Jev
  * (hosted in the US), so a run made with anything but the fictional sample team and tracker
  * is refused unless allowRealData is set. A file that is not an eval run is an Error.
+ *
+ * Each reply records whether its run used the sample data, whatever allowRealData says, so
+ * replies let in with --allow-real-data are marked false and jev:eval can keep them out.
  */
 export function itemsFromRun(run: unknown, runName: string, opts: { allowRealData: boolean }): UnlabelledItem[] {
   const parsed = RunFileSchema.safeParse(run);
@@ -114,19 +135,20 @@ export function itemsFromRun(run: unknown, runName: string, opts: { allowRealDat
     );
   }
   const { data, personas } = parsed.data;
+  const sampleData = data ? isSampleData(data.teamConfigPath, data.trackerPath) : false;
   if (!opts.allowRealData) {
     if (!data) {
       throw new RunRefusedError(
         "too-old",
         `${runName} is too old to know which team and tracker it used, so it may hold real people's work. ` +
-          `Rerun the eval to make a new run file, or pass --allow-real-data if you are sure it used the fictional sample team.`,
+          `Make a fresh run instead (${FRESH_RUN_COMMAND}; it is cheap).`,
       );
     }
-    if (!isSampleData(data.teamConfigPath, data.trackerPath)) {
+    if (!sampleData) {
       throw new RunRefusedError(
         "not-sample-data",
         `${runName} used ${data.teamConfigPath} and ${data.trackerPath}, not the fictional sample team and tracker, ` +
-          `so it may hold real people's work. Pass --allow-real-data only if you are sure it holds nothing real.`,
+          `so it may hold real people's work. ${ALLOW_REAL_DATA_TEXT}.`,
       );
     }
   }
@@ -134,7 +156,7 @@ export function itemsFromRun(run: unknown, runName: string, opts: { allowRealDat
   return personas.flatMap((persona) =>
     coachReplyLines(persona.transcript).map((line) => ({
       id: `${runName}:${persona.id}:${line}`,
-      source: { run: runName, persona: persona.id, line, coachPrompt },
+      source: { run: runName, persona: persona.id, line, coachPrompt, sampleData },
       ...exchangeAt(persona.transcript, line),
     })),
   );
@@ -180,6 +202,25 @@ export function loadSeedItems(path = SEED_PATH): UnlabelledItem[] {
 export function newItems(items: UnlabelledItem[], labelledIds: Iterable<string>): UnlabelledItem[] {
   const seen = new Set(labelledIds);
   return items.filter((item) => !seen.has(item.id) && (seen.add(item.id), true));
+}
+
+/**
+ * The command that finishes a --relabel run that stopped part-way: the same arguments without
+ * --relabel and without --limit. Running --relabel again would set the new gold file aside and
+ * pay for every reply again; without it, only the replies still missing are labelled.
+ */
+export function finishRelabelCommand(args: readonly string[]): string {
+  const kept: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--relabel" || arg.startsWith("--limit=")) continue;
+    if (arg === "--limit") {
+      i++; // and its number
+      continue;
+    }
+    kept.push(/^[\w./:=@%+-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`);
+  }
+  return kept.length ? `npm run jev:label -- ${kept.join(" ")}` : "npm run jev:label";
 }
 
 /** Takes one from each group in turn, so a capped run (--limit) still covers every source. */
@@ -320,8 +361,9 @@ export function formatPositiveRates(rows: PositiveRates[]): string[] {
  * first, so the pick doesn't depend on the order the items came in (the result is then in
  * that sorted order); without it the result keeps the list's own order.
  *
- * The one sampler behind every "pick n of these" in the Jev scripts: the repeat checks in
- * jev:label and jev:eval and the random slice of the hand-labelling sheet.
+ * Used for the repeat checks in jev:label and jev:eval. The random slice of the
+ * hand-labelling sheet uses a shuffled order instead (see humanLabels.ts), so it can grow
+ * a round at a time and still be a fair sample.
  */
 export function spreadPick<T>(items: readonly T[], n: number, sortKey?: (item: T) => string): T[] {
   const list = sortKey

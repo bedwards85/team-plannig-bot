@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -278,6 +278,42 @@ describe("JevClassifier calibration", () => {
   });
 });
 
+describe("JevClassifier.validated", () => {
+  const withStatus: JevCalibration = {
+    ...calibration,
+    flags: {
+      did_task: { ...calibration.flags.did_task!, status: "pass" },
+      below_top_level: { ...calibration.flags.below_top_level!, status: "fail" },
+      several_asks: { threshold: 0.5, isotonic: [] }, // a file from before results were recorded
+    },
+  };
+
+  it("is true only for flags the calibration in use marks as passed by jev:eval", () => {
+    const jev = classifier(fakeFetch().fetch, { calibration: withStatus });
+    expect(REPLY_FLAGS.filter((f) => jev.validated(f))).toEqual(["did_task"]);
+  });
+
+  it("is false for every flag without a calibration", () => {
+    const jev = classifier(fakeFetch().fetch);
+    expect(REPLY_FLAGS.some((f) => jev.validated(f))).toBe(false);
+  });
+
+  it("is false once the calibration is set aside, for other questions or another model", async () => {
+    expect(classifier(fakeFetch().fetch, { calibration: { ...withStatus, questionsVersion: "2026-09-01.1" } }).validated("did_task")).toBe(false);
+    const { fetch } = fakeFetch(json(jevAnswer({ model: "jev-test-2" })));
+    const jev = classifier(fetch, { calibration: withStatus });
+    expect(jev.validated("did_task")).toBe(true); // not known to be wrong until Jev answers
+    await jev.flagReply(exchange);
+    expect(jev.validated("did_task")).toBe(false);
+  });
+
+  it("reads the status from the calibration file, accepting only pass or fail", () => {
+    expect(JevCalibrationSchema.parse(withStatus).flags.did_task!.status).toBe("pass");
+    const bad = { ...calibration, flags: { did_task: { threshold: 0.3, isotonic: [], status: "maybe" } } };
+    expect(JevCalibrationSchema.safeParse(bad).success).toBe(false);
+  });
+});
+
 describe("JevClassifier failures return null, never throw", () => {
   it("on HTTP 500", async () => {
     const { fetch, calls } = fakeFetch(json({ error: "boom" }, 500));
@@ -369,6 +405,15 @@ describe("Jev helpers", () => {
     expect(hasJevCredentials({})).toBe(false);
     expect(hasJevCredentials({ TYPESAFE_API_KEY: "   " })).toBe(false);
     expect(hasJevCredentials({ TYPESAFE_API_KEY: "ts-key" })).toBe(true);
+  });
+
+  it(".env.example has a blank, uncommented TYPESAFE_API_KEY line to fill in, like ANTHROPIC_API_KEY", () => {
+    const lines = readFileSync(".env.example", "utf8").split(/\r?\n/);
+    expect(lines).toContain("ANTHROPIC_API_KEY=");
+    expect(lines).toContain("TYPESAFE_API_KEY=");
+    expect(lines).toContain("# JEV_MODEL=jev-latest");
+    // Left blank, it reads as no key, so the scripts say how to add one.
+    expect(hasJevCredentials({ TYPESAFE_API_KEY: "" })).toBe(false);
   });
 
   it("loadJevCalibration returns null when there is no file, and reads one that exists", () => {

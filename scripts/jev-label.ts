@@ -12,18 +12,23 @@
  * Options:
  *   --concurrency <n>   replies labelled at once (default 4)
  *   --relabel           start the gold file again from these runs and the seed file, for example after
- *                       changing eval/jev-questions.json. The old file is kept next to it.
+ *                       changing eval/jev-questions.json. The old file is kept next to it. If it stops
+ *                       part-way (an error, Ctrl+C or --limit), finish with the same command WITHOUT
+ *                       --relabel: running --relabel again would start over and pay for every reply again.
  *   --gold <path>       the gold file (default data/jev-gold/gold.jsonl)
- *   --allow-real-data   also use run files that were not made with the fictional sample team and
- *                       tracker, or that are too old to say. Only with the data protection officer's agreement.
+ *   --allow-real-data   real team data: only after the data-protection officer has agreed. Not for runs
+ *                       that are merely too old to say which data they used: make fresh runs instead
+ *                       (cheap; see below). Replies let in this way are marked as not sample data, and
+ *                       npm run jev:eval keeps them away from Jev unless it is given --allow-real-data too.
  *
  * Labels are added to the gold file as they arrive, so running it again only labels what is new,
  * and stopping it part-way (Ctrl+C) keeps what was done. To finish a --relabel run that stopped
- * part-way, run it again without --relabel. Replies Opus could not label (refused,
- * cut off, unreadable) are listed and left out; running it again retries them.
- * Labels written by people in data/jev-gold/human-labels.csv are never touched, and win over these.
+ * part-way, run it again without --relabel (the script prints the exact command). Replies Opus
+ * could not label (refused, cut off, unreadable) are listed and left out; running it again
+ * retries them. Labels written by people in data/jev-gold/human-labels.csv are never touched,
+ * and win over these.
  *
- * Make the transcripts first, with the fictional sample team, for example:
+ * Make the transcripts first, with the fictional sample team (cheap: no judge is called), for example:
  *   npm run eval -- --judge none --only personas
  *   npm run eval -- --judge none --only personas --coach-prompt eval/bad-coach/does-the-work.md
  *   npm run eval -- --judge none --only personas --coach-prompt eval/bad-coach/interrogator.md
@@ -37,11 +42,14 @@ import { hasAnthropicCredentials, loadDotEnv, loadText } from "../src/config.js"
 import { REPLY_FLAGS } from "../src/ports/classifier.js";
 import type { TurnUsage } from "../src/ports/llm.js";
 import {
+  ALLOW_REAL_DATA_TEXT,
+  FRESH_RUN_COMMAND,
   GOLD_PATH,
   LABEL_PROMPT_PATH,
   RunRefusedError,
   SEED_PATH,
   appendGold,
+  finishRelabelCommand,
   flagDefinitions,
   formatPositiveRates,
   interleave,
@@ -150,9 +158,27 @@ function stoppingProblem(error: unknown): string | null {
     return `The Anthropic API does not know the model ${JUDGE_MODEL}.`;
   }
   if (error instanceof Anthropic.APIConnectionError) {
-    return "Could not reach the Anthropic API. Check the internet connection, then run this again.";
+    return "Could not reach the Anthropic API. Check the internet connection.";
   }
   return null;
+}
+
+/**
+ * How to carry on after a labelling run stops early (an error, Ctrl+C or --limit). Once
+ * --relabel has started the gold file again, that means the same command WITHOUT --relabel:
+ * it labels only the replies still missing, whereas --relabel would set the new file aside
+ * and pay for every reply again. If --relabel stopped before writing anything, nothing
+ * changed, so the same command is right.
+ */
+function carryOnHint(relabelStarted: boolean): string {
+  if (values.relabel && relabelStarted) {
+    return (
+      `To finish, run ${finishRelabelCommand(process.argv.slice(2))} (without --relabel): it labels only the replies still ` +
+      "missing. Running --relabel again would start over and pay for every reply again."
+    );
+  }
+  if (values.relabel) return `Nothing in ${goldPath} was changed, so run the same command (with --relabel) to try again.`;
+  return "Run the same command again to carry on: replies already labelled are skipped.";
 }
 
 type Labelled = { labels: FlagLabels; notes: string } | { problem: string } | null;
@@ -179,14 +205,15 @@ function costLine(): string {
   return `Opus cost: $${estimateCost(JUDGE_MODEL, usage).toFixed(2)} for ${calls} call${calls === 1 ? "" : "s"}.`;
 }
 
-function listProblems(problems: { id: string; problem: string }[]): void {
+/** Lists replies Opus couldn't label, with how to retry them when there is a way. */
+function listProblems(problems: { id: string; problem: string }[], retryHint: string | null): void {
   if (problems.length === 0) return;
   console.log(
     `\n${problems.length} repl${problems.length === 1 ? "y" : "ies"} could not be labelled and were left out:`,
   );
   for (const p of problems.slice(0, 20)) console.log(`  ${p.id}: ${p.problem}`);
   if (problems.length > 20) console.log(`  …and ${problems.length - 20} more.`);
-  console.log("Run npm run jev:label again (without --relabel) to retry them: replies already labelled are skipped.");
+  if (retryHint) console.log(retryHint);
 }
 
 const yesFlags = (labels: FlagLabels): string => REPLY_FLAGS.filter((f) => labels[f]).join(", ") || "no flags";
@@ -234,8 +261,8 @@ async function runRepeatCheck(n: number): Promise<void> {
       `  [${pairs.length + problems.length}/${picked.length}] ${item.id}: ${changed.length ? `changed ${changed.join(", ")}` : "same"}`,
     );
   });
-  if (stopReason) console.log(`\nStopped early: ${stopReason}`);
-  listProblems(problems);
+  if (stopReason) console.log(`\nStopped early: ${stopReason} Then run the repeat check again.`);
+  listProblems(problems, null);
   if (pairs.length === 0) {
     console.log(`\nNo replies were labelled again, so there is nothing to compare. ${costLine()}`);
     process.exit(1);
@@ -364,13 +391,13 @@ function collectItems(): UnlabelledItem[][] {
     if (tooOld) {
       console.log(
         `${tooOld} ${tooOld === 1 ? "is" : "are"} from before the eval recorded which team and tracker it used. ` +
-          "Make fresh runs instead (see the top of scripts/jev-label.ts), or add --allow-real-data if you are sure they used the fictional sample team.",
+          `Make fresh runs instead, which is cheap: ${FRESH_RUN_COMMAND} (more examples at the top of scripts/jev-label.ts).`,
       );
     }
     if (real) {
       console.log(
-        `${real} used a team or tracker other than the fictional sample. Leave ${real === 1 ? "it" : "them"} out unless ` +
-          "the data protection officer has agreed, then add --allow-real-data.",
+        `${real} used a team or tracker other than the fictional sample, so ${real === 1 ? "it stays" : "they stay"} out: ` +
+          `${ALLOW_REAL_DATA_TEXT}.`,
       );
     }
   }
@@ -391,6 +418,8 @@ async function runLabelling(): Promise<void> {
    * so a run that labels nothing (a bad key, no network, nothing to read) leaves it where it was.
    */
   let moveOldGold = values.relabel && existsSync(goldPath);
+  /** False only while --relabel has written nothing, so the old gold file is still in place. */
+  const relabelStarted = () => !moveOldGold;
   const startAgainIfRelabelling = (): void => {
     if (!moveOldGold) return;
     moveOldGold = false;
@@ -410,8 +439,15 @@ async function runLabelling(): Promise<void> {
       `\nLabelling ${todo.length}${values.relabel ? "" : " new"} repl${todo.length === 1 ? "y" : "ies"} with ${JUDGE_MODEL}, ${concurrency} at a time` +
         `${deferred ? ` (${deferred} more left for a later run because of --limit)` : ""}. ` +
         `Expect roughly 1 to 4 cents a reply, so $${(todo.length * 0.01).toFixed(2)} to $${(todo.length * 0.04).toFixed(2)}. ` +
-        "Ctrl+C stops it and keeps what is done.",
+        "Ctrl+C stops it and keeps what is done." +
+        (values.relabel ? ` To finish after that, run ${finishRelabelCommand(process.argv.slice(2))} (without --relabel).` : ""),
     );
+    // Labels are written one at a time with a synchronous append, so stopping here never
+    // leaves half a line; say how to carry on rather than just vanishing.
+    process.once("SIGINT", () => {
+      console.log(`\n\nStopped (Ctrl+C). Every label finished so far is kept in ${goldPath}. ${carryOnHint(relabelStarted())}`);
+      process.exit(130);
+    });
   }
 
   const meta = { labeller: JUDGE_MODEL, questionsVersion: questions.version };
@@ -435,11 +471,16 @@ async function runLabelling(): Promise<void> {
     console.log(`  [${labelled + problems.length}/${todo.length}] ${item.id}: ${yesFlags(result.labels)}`);
   });
   if (stopReason) console.log(`\nStopped early: ${stopReason}`);
-  listProblems(problems);
+  // When the run stopped early or --limit left replies over, the hint comes once, below.
+  listProblems(problems, stopReason || deferred ? null : carryOnHint(relabelStarted()));
   if (moveOldGold && todo.length) console.log(`\nNothing was labelled, so ${goldPath} is left as it was.`);
 
   const all = readGold(goldPath);
   console.log(`\nLabelled ${labelled} new repl${labelled === 1 ? "y" : "ies"}. ${goldPath} now holds ${all.length}.`);
+  if (stopReason || deferred) {
+    const left = fresh.length - labelled; // replies Opus couldn't label are retried too
+    console.log(`${left} repl${left === 1 ? "y is" : "ies are"} still to label. ${carryOnHint(relabelStarted())}`);
+  }
   const older = all.filter((g) => g.questionsVersion !== questions.version).length;
   if (older) {
     console.log(
@@ -456,7 +497,8 @@ async function runLabelling(): Promise<void> {
       "Each check needs roughly 30-40% yes answers overall to be measured fairly." +
         (low.length
           ? ` Below 30% now: ${low.join(", ")}. Runs with the bad coach prompts in eval/bad-coach/ add did_task, ` +
-            "below_top_level, several_asks and filled_in_outcome; third_party_details comes mostly from the seed replies."
+            `below_top_level, several_asks and filled_in_outcome. third_party_details comes only from the hand-written ` +
+            `replies in ${SEED_PATH} (the personas and bad-coach prompts never produce it): add more fictional ones there.`
           : " Every check is there or above."),
     );
   }

@@ -3,8 +3,10 @@
  * repeat-run flip rates and call speed, with the pass bars from the plan. Pure functions,
  * so the rules are easy to test; scripts/jev-eval.ts does the calls and the printing.
  */
-import { JEV_QUESTIONS_PATH, type JevCalibration } from "../adapters/jev/JevClassifier.js";
+import { existsSync, readFileSync } from "node:fs";
+import { JEV_QUESTIONS_PATH, type FlagVerdict, type JevCalibration } from "../adapters/jev/JevClassifier.js";
 import { REPLY_FLAGS, type FlagProbabilities, type ReplyFlag } from "../ports/classifier.js";
+import { SEED_PATH, type GoldItem } from "./jevGold.js";
 import {
   applyIsotonic,
   auroc,
@@ -23,6 +25,12 @@ import { isSampleData, percentile } from "./support.js";
 export const JEV_BARS = {
   /** Share of real cases caught, on the held-back part, at the chosen threshold. */
   minRecall: 0.9,
+  /**
+   * Share of real cases the threshold must catch on the tuning part. Higher than minRecall
+   * on purpose: a threshold tuned to exactly 90% sits on the edge, so the held-back part
+   * would fall below 90% about half the time by chance alone.
+   */
+  tuningRecall: 0.95,
   /** Share of flags that are real cases, same part and threshold. */
   minPrecision: 0.6,
   /** Chance a real case scores above a clean reply (raw probabilities). */
@@ -35,6 +43,11 @@ export const JEV_BARS = {
   minEachClassPerPart: 10,
   /** Share of repeated replies whose yes/no changes between identical requests. */
   maxFlipRate: 0.05,
+  /**
+   * Replies with two or more answers needed before the flip rate counts. With fewer, one
+   * flip moves the rate by more than the 5% bar, so the result is "not measured".
+   */
+  minFlipReplies: 30,
   /**
    * Hand labels on the randomly picked rows of the hand-labelling sheet needed before a
    * flag's gold labels are judged; fewer are reported but don't count against the flag.
@@ -99,14 +112,16 @@ const scored = (items: FlagItem[], map: (p: number) => number = (p) => p): Score
 
 /**
  * Checks one flag. The stable 70/30 split by id keeps tuning and checking apart: the
- * recalibration and threshold come from the 70%, every reported number from the 30%.
+ * recalibration and threshold come from the 70%, every reported number from the 30%. The
+ * threshold is set to catch 95% of real cases on the 70%, so that the 90% bar on the 30%
+ * isn't a coin toss.
  */
 export function evaluateFlag(flag: ReplyFlag, items: FlagItem[]): FlagEvaluation {
   const tuningItems = items.filter((i) => isCalibrationSplit(i.id));
   const checkingItems = items.filter((i) => !isCalibrationSplit(i.id));
   const isotonic = mergeEqualBlocks(fitIsotonic(scored(tuningItems)));
   const recalibrate = (p: number) => applyIsotonic(isotonic, p);
-  const threshold = pickThreshold(scored(tuningItems, recalibrate), JEV_BARS.minRecall);
+  const threshold = pickThreshold(scored(tuningItems, recalibrate), JEV_BARS.tuningRecall);
 
   const raw = scored(checkingItems);
   const calibrated = scored(checkingItems, recalibrate);
@@ -176,6 +191,11 @@ export interface FlagRule {
 /** Statuses whose recalibration and threshold stay out of the calibration file. */
 const UNCALIBRATED: ReadonlySet<FlagStatus> = new Set(["not enough data", "labels untrustworthy"]);
 
+/** True when the coach eval will use raw probability against 0.5 for this flag, not a fitted rule. */
+export function isUncalibrated(evaluation: Pick<FlagEvaluation, "status" | "threshold">): boolean {
+  return UNCALIBRATED.has(evaluation.status) || evaluation.threshold === null;
+}
+
 /**
  * The rule for a flag as the coach eval will apply it: recalibrated probability against
  * the chosen threshold once the flag goes in the calibration file (enough data, labels not
@@ -183,7 +203,7 @@ const UNCALIBRATED: ReadonlySet<FlagStatus> = new Set(["not enough data", "label
  */
 export function ruleFor(evaluation: Pick<FlagEvaluation, "status" | "threshold" | "isotonic">): FlagRule {
   const { threshold, isotonic } = evaluation;
-  if (UNCALIBRATED.has(evaluation.status) || threshold === null) return { threshold: RAW_THRESHOLD, recalibrate: (p) => p };
+  if (isUncalibrated(evaluation) || threshold === null) return { threshold: RAW_THRESHOLD, recalibrate: (p) => p };
   return { threshold, recalibrate: (p) => applyIsotonic(isotonic, p) };
 }
 
@@ -198,22 +218,33 @@ export interface FlipSummary {
   replies: number;
   /** Replies whose yes/no changed at least once. */
   flipped: number;
-  rate: number | null;
   /** Null when there was nothing to compare. */
+  rate: number | null;
+  /** Null when not measured: fewer than 30 replies had two or more answers to compare. */
   pass: boolean | null;
 }
 
-/** How often the same request got a different yes/no, given each reply's raw probabilities across repeats. */
-export function flipSummary(rawRepeatsPerItem: number[][], decide: (rawP: number) => boolean): FlipSummary {
-  const decisions = rawRepeatsPerItem.map((ps) => ps.map(decide));
+/**
+ * How often the same request got a different yes/no, given each reply's raw probabilities:
+ * its answer in the main pass first, then its repeats. Under 30 replies to compare, the rate
+ * is still worked out but not judged.
+ */
+export function flipSummary(rawAnswersPerItem: number[][], decide: (rawP: number) => boolean): FlipSummary {
+  const decisions = rawAnswersPerItem.map((ps) => ps.map(decide));
   const usable = decisions.filter((d) => d.length > 1);
   const rate = flipRate(decisions);
   return {
     replies: usable.length,
     flipped: usable.filter((d) => d.some((x) => x !== d[0])).length,
     rate,
-    pass: rate === null ? null : rate <= JEV_BARS.maxFlipRate,
+    pass: rate === null || usable.length < JEV_BARS.minFlipReplies ? null : rate <= JEV_BARS.maxFlipRate,
   };
+}
+
+/** "measured", or why not: the repeat test wasn't run (null), or had too few replies to compare. */
+export function flipState(flip: FlipSummary | null): "measured" | "not run" | "too small" {
+  if (flip === null) return "not run";
+  return flip.pass === null ? "too small" : "measured";
 }
 
 /**
@@ -325,8 +356,24 @@ export function latestById<T extends { id: string }>(items: readonly T[]): { ite
   return { items: [...byId.values()], duplicates: items.length - byId.size };
 }
 
+/** A flag's final result in a jev:eval run: the label checks, then the repeat test. */
+export interface FlagOutcome {
+  evaluation: FlagEvaluation;
+  status: FlagStatus;
+  flip: FlipSummary | null;
+}
+
 /**
- * The calibration file's content: recalibration and threshold for each flag that had
+ * What the calibration file records about a flag, and so whether the coach eval lets Jev
+ * fail a chat on it: "pass" only when the flag passed every check, the repeat test included.
+ * A repeat test that wasn't run or was too small leaves it at "fail" (not validated).
+ */
+export function calibrationVerdict(outcome: Pick<FlagOutcome, "status" | "flip">): FlagVerdict {
+  return outcome.status === "pass" && outcome.flip?.pass === true ? "pass" : "fail";
+}
+
+/**
+ * The calibration file's content: recalibration, threshold and result for each flag that had
  * enough data (pass or fail) and whose labels weren't found untrustworthy, or null if none
  * did, so nothing useful would be written. It records the context setting the run used,
  * because the probabilities and thresholds only fit that setting.
@@ -337,16 +384,193 @@ export function buildCalibration(args: {
   createdAt: string;
   /** Earlier turns Jev read before each reply in this run; 0 = the whole conversation. */
   contextTurns: number;
-  evaluations: readonly FlagEvaluation[];
+  outcomes: readonly FlagOutcome[];
 }): JevCalibration | null {
   const flags: JevCalibration["flags"] = {};
-  for (const e of args.evaluations) {
-    if (UNCALIBRATED.has(e.status) || e.threshold === null) continue;
-    flags[e.flag] = { threshold: e.threshold, isotonic: e.isotonic };
+  for (const o of args.outcomes) {
+    const e = o.evaluation;
+    if (isUncalibrated(e) || e.threshold === null) continue;
+    flags[e.flag] = { threshold: e.threshold, isotonic: e.isotonic, status: calibrationVerdict(o) };
   }
   if (Object.keys(flags).length === 0) return null;
   const { model, questionsVersion, createdAt, contextTurns } = args;
   return { model, questionsVersion, createdAt, contextTurns, flags };
+}
+
+/**
+ * Share of gold replies Jev may leave unanswered before a run is treated as an outage. Past
+ * it, the run's thresholds rest on a part of the gold set Jev happened to answer, so the
+ * calibration file is left exactly as it was.
+ */
+export const MAX_UNANSWERED_SHARE = 0.05;
+
+/** What a jev:eval run does with eval/jev-calibration.json. */
+export type CalibrationAction =
+  /** --no-write: left alone. */
+  | "not asked"
+  /** Jev left more than 5% unanswered: left alone, whatever this run found. */
+  | "kept: outage"
+  /** No flag can be calibrated: an older file would switch on checks this run can't support, so it goes. */
+  | "remove"
+  | "write";
+
+/** True when Jev left more than 5% of the gold replies sent to it unanswered (or none were sent): an outage. */
+export function isOutage(answers: { sent: number; unanswered: number }): boolean {
+  return answers.sent === 0 || answers.unanswered / answers.sent > MAX_UNANSWERED_SHARE;
+}
+
+export function calibrationAction(args: { noWrite: boolean; sent: number; unanswered: number; hasCalibration: boolean }): CalibrationAction {
+  if (args.noWrite) return "not asked";
+  if (isOutage(args)) return "kept: outage";
+  return args.hasCalibration ? "write" : "remove";
+}
+
+/** The Overall line of a jev:eval run, and its exit code. */
+export interface OverallResult {
+  verdict: "PASS" | "FAIL" | "INCOMPLETE";
+  /** 0 only for a full pass. */
+  exitCode: 0 | 1;
+  text: string;
+}
+
+/**
+ * PASS only when every flag passed every check and the repeat test measured them. When all
+ * flags pass but the repeat test was skipped or too small, the result is INCOMPLETE, never
+ * PASS: whether Jev gives the same answer twice is part of being good enough. A run where
+ * Jev left more than 5% of the replies unanswered is INCOMPLETE too, whatever the flags
+ * show: its figures rest on the part Jev happened to answer, and the calibration file was
+ * left as it was, so a PASS would claim something npm run eval -- --judge jev doesn't use.
+ */
+export function overallResult(
+  outcomes: ReadonlyArray<Pick<FlagOutcome, "status" | "flip">>,
+  answers?: { sent: number; unanswered: number },
+): OverallResult {
+  const passed = outcomes.filter((o) => o.status === "pass").length;
+  const of = `${passed} of ${outcomes.length} flags pass`;
+  if (answers && isOutage(answers)) {
+    return {
+      verdict: "INCOMPLETE",
+      exitCode: 1,
+      text:
+        `INCOMPLETE: Jev left ${answers.unanswered} of ${answers.sent} replies unanswered (more than ${pct(MAX_UNANSWERED_SHARE)}), ` +
+        `so this run doesn't count (${of} on the replies it answered). Run this again when Jev is reachable.`,
+    };
+  }
+  if (passed < outcomes.length) return { verdict: "FAIL", exitCode: 1, text: `FAIL (${of})` };
+  const notRun = outcomes.some((o) => flipState(o.flip) === "not run");
+  const small = outcomes.find((o) => flipState(o.flip) === "too small");
+  if (notRun || small) {
+    const what = notRun
+      ? "INCOMPLETE: flip test not run"
+      : `INCOMPLETE: flip test too small (it compared ${small!.flip!.replies} replies; needs ${JEV_BARS.minFlipReplies})`;
+    return {
+      verdict: "INCOMPLETE",
+      exitCode: 1,
+      text: `${what}. All ${outcomes.length} flags pass the other checks, but Jev isn't validated until the repeat test shows it gives the same answer twice.`,
+    };
+  }
+  return {
+    verdict: "PASS",
+    exitCode: 0,
+    text: `PASS (${of}): Jev is good enough to use as the quick judge while working on the coach prompt (Opus stays the release judge).`,
+  };
+}
+
+/**
+ * What to do about flags without enough data. third_party_details is different from the
+ * others: its "yes" cases (customer or suspect details in a reply) come only from the
+ * hand-written seed replies, as no persona or bad-coach prompt produces them, so more
+ * transcripts won't help.
+ */
+export function notEnoughDataAdvice(evaluations: ReadonlyArray<Pick<FlagEvaluation, "flag" | "status" | "labels" | "tuning" | "checking">>): string[] {
+  const min = JEV_BARS.minEachClassPerPart;
+  const transcripts: ReplyFlag[] = [];
+  let seed = false;
+  for (const e of evaluations) {
+    if (e.status !== "not enough data") continue;
+    const fewYes = e.tuning.positives < min || e.checking.positives < min;
+    const fewNo = e.tuning.n - e.tuning.positives < min || e.checking.n - e.checking.positives < min;
+    const fewLabels = e.labels < JEV_BARS.minLabels;
+    if (e.flag === "third_party_details" && fewYes) seed = true;
+    if (fewLabels || fewNo || (fewYes && e.flag !== "third_party_details")) transcripts.push(e.flag);
+  }
+  const advice: string[] = [];
+  if (seed) {
+    advice.push(
+      `For third_party_details: its "yes" cases (customer or suspect details in a reply) come only from the hand-written replies in ${SEED_PATH}; ` +
+        "the personas and the bad-coach prompts never produce them, so more transcripts won't help. Add more fictional ones there, " +
+        "label them with npm run jev:label, then run this again.",
+    );
+  }
+  if (transcripts.length) {
+    advice.push(
+      `For ${transcripts.join(", ")}: make more transcripts (npm run eval -- --judge none --only personas, also with --coach-prompt ` +
+        "and a file in eval/bad-coach/), label them with npm run jev:label, then run this again.",
+    );
+  }
+  return advice;
+}
+
+// ---- Keeping real data away from Jev ----
+
+/** What jev:eval finds when it looks for the run file behind some gold replies. */
+export type RunFileState = "missing" | "unreadable" | "sample" | "other" | "unknown";
+
+/** Looks at a run file from npm run eval: is it there, can it be read, and which data did it use? */
+export function readRunFileState(path: string): RunFileState {
+  if (!existsSync(path)) return "missing";
+  try {
+    return runDataKind(JSON.parse(readFileSync(path, "utf8")));
+  } catch {
+    return "unreadable";
+  }
+}
+
+/** Why a gold reply was kept away from Jev. */
+export type LeftOutReason =
+  | "admitted with --allow-real-data"
+  | "not sample data"
+  | "run file missing"
+  | "run file unreadable"
+  | "run file too old to say which data it used";
+
+/**
+ * The real-data guard in jev:eval, failing closed. A reply from an eval run goes to Jev only
+ * if the gold set records that its run used the fictional sample team and tracker, or, for
+ * gold files made before that was recorded, its run file is still there, can be read and
+ * says so. A readable run file that says otherwise keeps the reply out either way. Seed
+ * replies are hand-written and fictional, so they always go.
+ */
+export function checkRealData<T extends Pick<GoldItem, "id" | "source">>(
+  items: readonly T[],
+  runFile: (run: string) => RunFileState,
+): { send: T[]; leftOut: Array<{ id: string; run: string; reason: LeftOutReason }> } {
+  const states = new Map<string, RunFileState>();
+  const stateOf = (run: string) => {
+    if (!states.has(run)) states.set(run, runFile(run));
+    return states.get(run)!;
+  };
+  const send: T[] = [];
+  const leftOut: Array<{ id: string; run: string; reason: LeftOutReason }> = [];
+  for (const item of items) {
+    if ("seed" in item.source) {
+      send.push(item);
+      continue;
+    }
+    const { run, sampleData } = item.source;
+    const state = stateOf(run);
+    let reason: LeftOutReason | null = null;
+    if (sampleData === false) reason = "admitted with --allow-real-data";
+    else if (state === "other") reason = "not sample data";
+    else if (sampleData === undefined) {
+      if (state === "missing") reason = "run file missing";
+      else if (state === "unreadable") reason = "run file unreadable";
+      else if (state === "unknown") reason = "run file too old to say which data it used";
+    }
+    if (reason) leftOut.push({ id: item.id, run, reason });
+    else send.push(item);
+  }
+  return { send, leftOut };
 }
 
 // ---- How far the gold labels can be trusted ----
@@ -438,10 +662,25 @@ const STATUS_TEXT: Record<FlagStatus, string> = {
   "labels untrustworthy": "LABELS UNTRUSTWORTHY",
 };
 
+/**
+ * The Threshold cell: the fitted threshold, or for a flag the coach eval won't calibrate
+ * ("not enough data", "labels untrustworthy") the rule it applies instead, raw 0.50, with
+ * any fitted threshold marked as not used.
+ */
+function thresholdCell(e: FlagEvaluation, status: FlagStatus): string {
+  if (!isUncalibrated(e) && !UNCALIBRATED.has(status)) return e.threshold === null ? "n/a" : two(e.threshold);
+  return `raw ${two(RAW_THRESHOLD)}${e.threshold === null ? "" : ` (${two(e.threshold)} not used)`}`;
+}
+
+/** The Flip rate cell: "not run" when skipped, "not measured" when under 30 replies were compared. */
+function flipCell(flip: FlipSummary | null): string {
+  if (flip === null) return "not run";
+  if (flip.pass === null) return `not measured (${flip.replies} compared)`;
+  return `${pct(flip.rate!)} (${flip.flipped}/${flip.replies})`;
+}
+
 /** The results table, one line per flag, with a header line. */
-export function formatResultsTable(
-  rows: ReadonlyArray<{ evaluation: FlagEvaluation; status: FlagStatus; flip: FlipSummary | null }>,
-): string[] {
+export function formatResultsTable(rows: ReadonlyArray<FlagOutcome>): string[] {
   const num = (x: number | null) => (x === null ? "n/a" : two(x));
   const header = ["Flag", "Result", "Recall", "Precision", "AUROC", "ECE before → after", "Threshold", "Checked (yes)", "Flip rate"];
   const body = rows.map(({ evaluation: e, status, flip }) => [
@@ -451,9 +690,9 @@ export function formatResultsTable(
     num(e.metrics.precision),
     num(e.metrics.auroc),
     `${num(e.metrics.eceRaw)} → ${num(e.metrics.eceCalibrated)}`,
-    num(e.threshold),
+    thresholdCell(e, status),
     `${e.checking.n} (${e.checking.positives})`,
-    flip === null ? "not run" : flip.rate === null ? "n/a" : `${pct(flip.rate)} (${flip.flipped}/${flip.replies})`,
+    flipCell(flip),
   ]);
   const widths = header.map((h, i) => Math.max(h.length, ...body.map((r) => r[i]!.length)));
   return [header, ...body].map((r) => r.map((cell, i) => cell.padEnd(widths[i]!)).join("  ").trimEnd());

@@ -1,20 +1,42 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { applyIsotonic, auroc, expectedCalibrationError, isCalibrationSplit, precisionRecall, type IsotonicBlock } from "../src/eval/jevMetrics.js";
+import {
+  applyIsotonic,
+  auroc,
+  expectedCalibrationError,
+  fitIsotonic,
+  isCalibrationSplit,
+  pickThreshold,
+  precisionRecall,
+  type IsotonicBlock,
+} from "../src/eval/jevMetrics.js";
 import {
   JEV_BARS,
+  MAX_UNANSWERED_SHARE,
   applyLabelTrust,
   buildCalibration,
+  calibrationAction,
+  calibrationVerdict,
+  checkRealData,
   deciderFor,
   evaluateFlag,
   findDisagreements,
   flagOutcome,
+  flipState,
   flipSummary,
   formatLabelTrust,
   formatResultsTable,
+  isOutage,
+  isUncalibrated,
   labelTrust,
   latestById,
   mergeEqualBlocks,
   mostCommon,
+  notEnoughDataAdvice,
+  overallResult,
+  readRunFileState,
   ruleFor,
   runDataKind,
   summariseLatency,
@@ -22,8 +44,11 @@ import {
   type FlagEvaluation,
   type FlagItem,
   type FlagRule,
+  type FlipSummary,
   type LabelTrust,
+  type RunFileState,
 } from "../src/eval/jevReport.js";
+import type { GoldItem } from "../src/eval/jevGold.js";
 import { JevCalibrationSchema } from "../src/adapters/jev/JevClassifier.js";
 import { REPLY_FLAGS, type FlagProbabilities, type ReplyFlag } from "../src/ports/classifier.js";
 
@@ -74,9 +99,9 @@ describe("evaluateFlag", () => {
     expect(e.tuning.n + e.checking.n).toBe(400);
     expect(e.tuning.n / 400).toBeGreaterThan(0.6);
     expect(e.tuning.n / 400).toBeLessThan(0.8);
-    // The threshold keeps at least 90% recall on the recalibrated tuning part.
+    // The threshold keeps at least 95% recall on the recalibrated tuning part.
     const recal = tuning.map((i) => ({ p: applyIsotonic(e.isotonic, i.p), y: i.y }));
-    expect(precisionRecall(recal, e.threshold!).recall!).toBeGreaterThanOrEqual(0.9);
+    expect(precisionRecall(recal, e.threshold!).recall!).toBeGreaterThanOrEqual(0.95);
     // Every reported number comes from the 30% part: raw for AUROC and ECE before, recalibrated otherwise.
     const checkRaw = checking.map((i) => ({ p: i.p, y: i.y }));
     const checkRecal = checking.map((i) => ({ p: applyIsotonic(e.isotonic, i.p), y: i.y }));
@@ -88,6 +113,21 @@ describe("evaluateFlag", () => {
     });
   });
 
+  it("sets the threshold for 95% recall on the tuning part, a margin above the 90% bar on the held-back part", () => {
+    expect([JEV_BARS.tuningRecall, JEV_BARS.minRecall]).toEqual([0.95, 0.9]);
+    // A noisy classifier, so the two recall targets give different thresholds.
+    const all = items(600, (y, u) => (y ? Math.sqrt(u) : u * u), 3);
+    const e = evaluateFlag("did_task", all);
+    const tuning = all.filter((i) => isCalibrationSplit(i.id)).map((i) => ({ p: i.p, y: i.y }));
+    const isotonic = fitIsotonic(tuning);
+    const recal = tuning.map((i) => ({ p: applyIsotonic(isotonic, i.p), y: i.y }));
+    const at95 = pickThreshold(recal, 0.95);
+    const at90 = pickThreshold(recal, 0.9);
+    expect(at95).not.toBe(at90);
+    expect(e.threshold).toBe(at95);
+    expect(e.threshold!).toBeLessThan(at90!); // a lower threshold catches more
+  });
+
   it("measures only the held-back part: a classifier right on the 70% but backwards on the 30% fails", () => {
     const all = items(400, (y, u) => (y ? 0.6 + 0.4 * u : 0.4 * u)).map((i) =>
       isCalibrationSplit(i.id) ? i : { ...i, p: 1 - i.p },
@@ -97,14 +137,14 @@ describe("evaluateFlag", () => {
     expect(e.metrics.auroc).toBe(auroc(all.filter((i) => !isCalibrationSplit(i.id))));
     expect(e.metrics.auroc!).toBeLessThan(0.1);
     expect(e.reasons.join(" ")).toMatch(/AUROC 0\.0\d: too often scores a clean reply above a real case \(needs 0\.85 or more\)/);
+    expect(e.reasons[0]).toBe("catches 0% of real cases (needs 90% or more)");
   });
 
   it("fails a classifier that guesses, giving each failed bar in plain words", () => {
+    // To catch 95% of real cases it has to flag nearly everything, so recall holds up but nothing else does.
     const e = evaluateFlag("filled_in_outcome", items(400, (_y, u) => u, 11));
     expect(e.status).toBe("fail");
-    expect(e.metrics.recall!).toBeLessThan(JEV_BARS.minRecall);
     expect(e.reasons).toEqual([
-      expect.stringMatching(/^catches \d+% of real cases \(needs 90% or more\)$/),
       expect.stringMatching(/^only \d+% of its flags are real cases \(needs 60% or more\)$/),
       expect.stringMatching(/^AUROC 0\.\d\d: too often scores a clean reply above a real case \(needs 0\.85 or more\)$/),
     ]);
@@ -184,32 +224,48 @@ describe("deciderFor", () => {
 
 describe("flipSummary", () => {
   const atHalf = (p: number) => p >= 0.5;
+  const steady = (n: number) => Array.from({ length: n }, () => [0.9, 0.9]);
 
-  it("counts replies whose yes/no changed across repeats", () => {
+  it("counts replies whose yes/no changed across their answers", () => {
     const s = flipSummary(
       [
         [0.4, 0.6, 0.4],
         [0.9, 0.95],
         [0.1, 0.2, 0.3],
         [0.7, 0.7, 0.2],
+        ...steady(36),
       ],
       atHalf,
     );
-    expect(s).toEqual({ replies: 4, flipped: 2, rate: 0.5, pass: false });
+    expect(s).toEqual({ replies: 40, flipped: 2, rate: 0.05, pass: true });
   });
 
   it("ignores replies with fewer than two answers", () => {
-    expect(flipSummary([[0.9], [], [0.1, 0.2]], atHalf)).toEqual({ replies: 1, flipped: 0, rate: 0, pass: true });
+    expect(flipSummary([[0.9], [], ...steady(30)], atHalf)).toEqual({ replies: 30, flipped: 0, rate: 0, pass: true });
   });
 
-  it("passes at exactly 5%", () => {
-    const steady = Array.from({ length: 19 }, () => [0.9, 0.9]);
-    expect(flipSummary([...steady, [0.4, 0.6]], atHalf).pass).toBe(true);
-    expect(flipSummary([...steady.slice(1), [0.4, 0.6], [0.6, 0.4]], atHalf).pass).toBe(false);
+  it("passes at exactly 5%, and fails above it", () => {
+    expect(flipSummary([...steady(38), [0.4, 0.6], [0.6, 0.4]], atHalf).pass).toBe(true); // 2 of 40
+    expect(flipSummary([...steady(37), [0.4, 0.6], [0.6, 0.4], [0.3, 0.7]], atHalf).pass).toBe(false); // 3 of 40
+  });
+
+  it("doesn't judge the rate with fewer than 30 replies to compare: 'not measured'", () => {
+    expect(JEV_BARS.minFlipReplies).toBe(30);
+    const small = flipSummary([...steady(19), [0.4, 0.6]], atHalf);
+    expect(small).toEqual({ replies: 20, flipped: 1, rate: 0.05, pass: null });
+    expect(flipState(small)).toBe("too small");
+    // Even a clean record isn't a pass when it is too small.
+    expect(flipSummary(steady(29), atHalf).pass).toBeNull();
+    expect(flipSummary(steady(30), atHalf).pass).toBe(true);
   });
 
   it("gives null with nothing to compare", () => {
     expect(flipSummary([], atHalf)).toEqual({ replies: 0, flipped: 0, rate: null, pass: null });
+  });
+
+  it("knows a skipped test from a measured one", () => {
+    expect(flipState(null)).toBe("not run");
+    expect(flipState(flipSummary(steady(30), atHalf))).toBe("measured");
   });
 });
 
@@ -225,6 +281,7 @@ describe("flagOutcome", () => {
   it("keeps the label checks' result when the flip rate is fine or wasn't measured", () => {
     expect(flagOutcome(evaluation(), { replies: 50, flipped: 1, rate: 0.02, pass: true }).status).toBe("pass");
     expect(flagOutcome(evaluation(), null).status).toBe("pass");
+    expect(flagOutcome(evaluation(), { replies: 12, flipped: 3, rate: 0.25, pass: null }).status).toBe("pass");
     expect(flagOutcome(evaluation({ status: "fail", reasons: ["x"] }), null)).toEqual({ status: "fail", reasons: ["x"] });
   });
 
@@ -278,6 +335,14 @@ describe("ruleFor", () => {
     const rule = ruleFor(evaluation({ status: "labels untrustworthy", threshold: 0.3 }));
     expect(rule.threshold).toBe(0.5);
     expect(rule.recalibrate(0.6)).toBe(0.6);
+  });
+
+  it("knows which flags aren't calibrated", () => {
+    expect(isUncalibrated(evaluation())).toBe(false);
+    expect(isUncalibrated(evaluation({ status: "fail" }))).toBe(false);
+    expect(isUncalibrated(evaluation({ status: "not enough data" }))).toBe(true);
+    expect(isUncalibrated(evaluation({ status: "labels untrustworthy" }))).toBe(true);
+    expect(isUncalibrated(evaluation({ threshold: null }))).toBe(true);
   });
 });
 
@@ -404,37 +469,220 @@ describe("runDataKind", () => {
 
 describe("buildCalibration", () => {
   const args = { model: "jev-test-1", questionsVersion: "2026-10-05.1", createdAt: "2026-10-05T09:00:00.000Z", contextTurns: 4 };
+  const measured: FlipSummary = { replies: 50, flipped: 1, rate: 0.02, pass: true };
+  const outcome = (e: FlagEvaluation, flip: FlipSummary | null = measured) => ({ evaluation: e, status: e.status, flip });
 
-  it("includes passing and failing flags, but not those without enough data or with untrustworthy labels", () => {
+  it("includes passing and failing flags with their result, but not those without enough data or with untrustworthy labels", () => {
     const cal = buildCalibration({
       ...args,
-      evaluations: [
-        evaluation({ flag: "did_task" }),
-        evaluation({ flag: "several_asks", status: "fail", threshold: 0.3, isotonic: [[0, 1, 0.4]] }),
-        evaluation({ flag: "third_party_details", status: "not enough data" }),
-        evaluation({ flag: "filled_in_outcome", status: "labels untrustworthy" }),
+      outcomes: [
+        outcome(evaluation({ flag: "did_task" })),
+        outcome(evaluation({ flag: "several_asks", status: "fail", threshold: 0.3, isotonic: [[0, 1, 0.4]] })),
+        outcome(evaluation({ flag: "third_party_details", status: "not enough data" })),
+        outcome(evaluation({ flag: "filled_in_outcome", status: "labels untrustworthy" })),
       ],
     });
     expect(cal).toEqual({
       ...args,
       flags: {
-        did_task: { threshold: 0.5, isotonic: evaluation().isotonic },
-        several_asks: { threshold: 0.3, isotonic: [[0, 1, 0.4]] },
+        did_task: { threshold: 0.5, isotonic: evaluation().isotonic, status: "pass" },
+        several_asks: { threshold: 0.3, isotonic: [[0, 1, 0.4]], status: "fail" },
       },
     });
+    expect(JevCalibrationSchema.parse(cal)).toEqual(cal);
+  });
+
+  it("marks a flag that passed the label checks as not passed when the repeat test was skipped, too small or failed", () => {
+    const flags = (flip: FlipSummary | null, status: FlagEvaluation["status"] = "pass") =>
+      buildCalibration({ ...args, outcomes: [{ evaluation: evaluation(), status, flip }] })!.flags.did_task!.status;
+    expect(flags(measured)).toBe("pass");
+    expect(flags(null)).toBe("fail");
+    expect(flags({ replies: 20, flipped: 0, rate: 0, pass: null })).toBe("fail");
+    expect(flags({ replies: 50, flipped: 10, rate: 0.2, pass: false }, "fail")).toBe("fail");
   });
 
   it("gives null when no flag can be calibrated", () => {
-    expect(buildCalibration({ ...args, evaluations: [evaluation({ status: "not enough data" }), evaluation({ threshold: null })] })).toBeNull();
-    expect(buildCalibration({ ...args, evaluations: [evaluation({ status: "labels untrustworthy" })] })).toBeNull();
+    expect(buildCalibration({ ...args, outcomes: [outcome(evaluation({ status: "not enough data" })), outcome(evaluation({ threshold: null }))] })).toBeNull();
+    expect(buildCalibration({ ...args, outcomes: [outcome(evaluation({ status: "labels untrustworthy" }))] })).toBeNull();
   });
 
   it("records the context setting the run used, whatever it was, so the coach eval sends the same", () => {
     for (const contextTurns of [0, 2, 4, 12]) {
-      const cal = buildCalibration({ ...args, contextTurns, evaluations: [evaluation()] });
+      const cal = buildCalibration({ ...args, contextTurns, outcomes: [outcome(evaluation())] });
       expect(cal!.contextTurns).toBe(contextTurns);
       expect(JevCalibrationSchema.parse(cal)).toEqual(cal);
     }
+  });
+});
+
+describe("calibrationVerdict", () => {
+  it("is pass only for a flag that passed every check, the repeat test included", () => {
+    const flip = (pass: boolean | null): FlipSummary => ({ replies: 40, flipped: 0, rate: 0, pass });
+    expect(calibrationVerdict({ status: "pass", flip: flip(true) })).toBe("pass");
+    expect(calibrationVerdict({ status: "pass", flip: null })).toBe("fail");
+    expect(calibrationVerdict({ status: "pass", flip: flip(null) })).toBe("fail");
+    expect(calibrationVerdict({ status: "fail", flip: flip(true) })).toBe("fail");
+  });
+});
+
+describe("overallResult", () => {
+  const measured: FlipSummary = { replies: 50, flipped: 0, rate: 0, pass: true };
+  const allPass = (flip: FlipSummary | null) => Array.from({ length: 5 }, () => ({ status: "pass" as const, flip }));
+
+  it("passes only when every flag passed and the repeat test measured them", () => {
+    const o = overallResult(allPass(measured));
+    expect(o.verdict).toBe("PASS");
+    expect(o.exitCode).toBe(0);
+    expect(o.text).toMatch(/^PASS \(5 of 5 flags pass\): Jev is good enough/);
+  });
+
+  it("is INCOMPLETE, never PASS, when the repeat test was skipped", () => {
+    const o = overallResult(allPass(null));
+    expect(o.verdict).toBe("INCOMPLETE");
+    expect(o.exitCode).toBe(1);
+    expect(o.text).toMatch(/^INCOMPLETE: flip test not run\./);
+    expect(o.text).not.toMatch(/PASS/);
+  });
+
+  it("is INCOMPLETE when the repeat test compared too few replies", () => {
+    const o = overallResult(allPass({ replies: 12, flipped: 0, rate: 0, pass: null }));
+    expect(o.verdict).toBe("INCOMPLETE");
+    expect(o.exitCode).toBe(1);
+    expect(o.text).toMatch(/^INCOMPLETE: flip test too small \(it compared 12 replies; needs 30\)/);
+  });
+
+  it("fails when any flag fails, whatever the repeat test did", () => {
+    const outcomes = [...allPass(null).slice(1), { status: "not enough data" as const, flip: null }];
+    expect(overallResult(outcomes)).toEqual({ verdict: "FAIL", exitCode: 1, text: "FAIL (4 of 5 flags pass)" });
+  });
+
+  it("is INCOMPLETE, never PASS, when Jev left more than 5% of the replies unanswered", () => {
+    expect(overallResult(allPass(measured), { sent: 200, unanswered: 10 }).verdict).toBe("PASS"); // exactly 5%
+    const o = overallResult(allPass(measured), { sent: 200, unanswered: 11 });
+    expect(o.verdict).toBe("INCOMPLETE");
+    expect(o.exitCode).toBe(1);
+    expect(o.text).toMatch(/^INCOMPLETE: Jev left 11 of 200 replies unanswered \(more than 5%\), so this run doesn't count \(5 of 5 flags pass/);
+    expect(o.text).toMatch(/Run this again when Jev is reachable\.$/);
+    // A failing flag measured on part of the gold set is no firmer than a pass.
+    const failing = [...allPass(measured).slice(1), { status: "fail" as const, flip: measured }];
+    expect(overallResult(failing, { sent: 200, unanswered: 40 })).toMatchObject({ verdict: "INCOMPLETE", exitCode: 1 });
+  });
+});
+
+describe("calibrationAction", () => {
+  const base = { noWrite: false, sent: 200, unanswered: 0, hasCalibration: true };
+
+  it("writes a calibration when Jev answered (nearly) everything", () => {
+    expect(calibrationAction(base)).toBe("write");
+    expect(calibrationAction({ ...base, unanswered: 10 })).toBe("write"); // exactly 5%
+  });
+
+  it("removes an old file when no flag can be calibrated, but only when Jev answered", () => {
+    expect(calibrationAction({ ...base, hasCalibration: false })).toBe("remove");
+    expect(calibrationAction({ ...base, hasCalibration: false, unanswered: 11 })).toBe("kept: outage");
+  });
+
+  it("leaves the file exactly as it was when Jev left more than 5% unanswered", () => {
+    expect(MAX_UNANSWERED_SHARE).toBe(0.05);
+    expect([isOutage({ sent: 200, unanswered: 10 }), isOutage({ sent: 200, unanswered: 11 }), isOutage({ sent: 0, unanswered: 0 })]).toEqual([false, true, true]);
+    expect(calibrationAction({ ...base, unanswered: 11 })).toBe("kept: outage");
+    expect(calibrationAction({ ...base, unanswered: 200 })).toBe("kept: outage");
+    expect(calibrationAction({ ...base, sent: 0 })).toBe("kept: outage");
+  });
+
+  it("does nothing with --no-write", () => {
+    expect(calibrationAction({ ...base, noWrite: true })).toBe("not asked");
+    expect(calibrationAction({ ...base, noWrite: true, unanswered: 150 })).toBe("not asked");
+  });
+});
+
+describe("notEnoughDataAdvice", () => {
+  const short = (flag: FlagEvaluation["flag"], over: Partial<FlagEvaluation> = {}) =>
+    evaluation({ flag, status: "not enough data", labels: 300, tuning: { n: 210, positives: 70 }, checking: { n: 90, positives: 30 }, ...over });
+
+  it("sends third_party_details to the seed file when it lacks yes labels, never to more transcripts", () => {
+    const advice = notEnoughDataAdvice([short("third_party_details", { tuning: { n: 210, positives: 4 } })]);
+    expect(advice).toHaveLength(1);
+    expect(advice[0]).toMatch(/third_party_details.*eval\/jev-seed\.json/);
+    expect(advice[0]).toMatch(/never produce them/);
+    expect(advice[0]).not.toMatch(/make more transcripts/);
+  });
+
+  it("suggests more transcripts for the other flags, or when third_party_details is short of labels overall", () => {
+    const advice = notEnoughDataAdvice([
+      short("did_task", { tuning: { n: 210, positives: 3 } }),
+      short("third_party_details", { labels: 90, tuning: { n: 60, positives: 2 }, checking: { n: 30, positives: 1 } }),
+      evaluation({ flag: "several_asks" }), // passing: no advice
+    ]);
+    expect(advice).toHaveLength(2);
+    expect(advice[0]).toMatch(/^For third_party_details: its "yes" cases/);
+    expect(advice[1]).toMatch(/^For did_task, third_party_details: make more transcripts/);
+  });
+
+  it("says nothing when every flag has enough data", () => {
+    expect(notEnoughDataAdvice([evaluation(), evaluation({ status: "fail" })])).toEqual([]);
+  });
+});
+
+describe("checkRealData", () => {
+  const item = (id: string, source: GoldItem["source"]) => ({ id, source });
+  const runItem = (id: string, run: string, sampleData?: boolean) =>
+    item(id, { run, persona: "p", line: 2, coachPrompt: "prompts/coach.md", ...(sampleData === undefined ? {} : { sampleData }) });
+  const files: Record<string, RunFileState> = { gone: "missing", broken: "unreadable", fine: "sample", real: "other", old: "unknown" };
+  const lookup = (run: string) => files[run] ?? "missing";
+
+  it("sends seed replies, and run replies the gold set records as sample data, even when the run file is gone", () => {
+    const { send, leftOut } = checkRealData([item("seed:a", { seed: "a" }), runItem("r1", "gone", true), runItem("r2", "fine", true)], lookup);
+    expect(send.map((i) => i.id)).toEqual(["seed:a", "r1", "r2"]);
+    expect(leftOut).toEqual([]);
+  });
+
+  it("leaves out replies let in with --allow-real-data, whatever their run file says", () => {
+    const { send, leftOut } = checkRealData([runItem("r1", "fine", false), runItem("r2", "gone", false)], lookup);
+    expect(send).toEqual([]);
+    expect(leftOut.map((l) => l.reason)).toEqual(["admitted with --allow-real-data", "admitted with --allow-real-data"]);
+  });
+
+  it("leaves out a reply whose readable run file says it used other data, even if the gold set says sample", () => {
+    expect(checkRealData([runItem("r1", "real", true)], lookup).leftOut).toEqual([{ id: "r1", run: "real", reason: "not sample data" }]);
+  });
+
+  it("fails closed for older gold files: no record means the run file must be there, readable and sample data", () => {
+    const { send, leftOut } = checkRealData(
+      [runItem("a", "fine"), runItem("b", "gone"), runItem("c", "broken"), runItem("d", "real"), runItem("e", "old")],
+      lookup,
+    );
+    expect(send.map((i) => i.id)).toEqual(["a"]);
+    expect(leftOut).toEqual([
+      { id: "b", run: "gone", reason: "run file missing" },
+      { id: "c", run: "broken", reason: "run file unreadable" },
+      { id: "d", run: "real", reason: "not sample data" },
+      { id: "e", run: "old", reason: "run file too old to say which data it used" },
+    ]);
+  });
+
+  it("looks at each run file once", () => {
+    const seen: string[] = [];
+    checkRealData([runItem("a", "fine"), runItem("b", "fine"), runItem("c", "gone")], (run) => (seen.push(run), lookup(run)));
+    expect(seen).toEqual(["fine", "gone"]);
+  });
+});
+
+describe("readRunFileState", () => {
+  const dir = mkdtempSync(join(tmpdir(), "run-files-"));
+  const write = (name: string, body: string) => {
+    const path = join(dir, name);
+    writeFileSync(path, body);
+    return path;
+  };
+
+  it("tells a missing, unreadable, sample, other and too-old run file apart", () => {
+    expect(readRunFileState(join(dir, "nope.json"))).toBe("missing");
+    expect(readRunFileState(write("broken.json", "{ not json"))).toBe("unreadable");
+    const data = { teamConfigPath: "config/team.sample.yaml", trackerPath: "fixtures/q4-tracker.sample.json" };
+    expect(readRunFileState(write("sample.json", JSON.stringify({ data, personas: [] })))).toBe("sample");
+    expect(readRunFileState(write("real.json", JSON.stringify({ data: { ...data, teamConfigPath: "config/team.local.yaml" } })))).toBe("other");
+    expect(readRunFileState(write("old.json", JSON.stringify({ personas: [] })))).toBe("unknown");
   });
 });
 
@@ -530,14 +778,28 @@ describe("formatResultsTable", () => {
     expect(lines).toHaveLength(3);
     expect(lines[0]).toMatch(/^Flag\s+Result\s+Recall\s+Precision\s+AUROC\s+ECE before → after\s+Threshold\s+Checked \(yes\)\s+Flip rate$/);
     expect(lines[1]).toMatch(/^did_task\s+PASS\s+0\.94\s+0\.72\s+0\.93\s+0\.21 → 0\.04\s+0\.50\s+90 \(30\)\s+2% \(1\/50\)$/);
-    expect(lines[2]).toMatch(/^third_party_details\s+NOT ENOUGH DATA\s+n\/a\s+n\/a\s+n\/a\s+n\/a → n\/a\s+n\/a\s+90 \(30\)\s+not run$/);
+    expect(lines[2]).toMatch(/^third_party_details\s+NOT ENOUGH DATA\s+n\/a\s+n\/a\s+n\/a\s+n\/a → n\/a\s+raw 0\.50\s+90 \(30\)\s+not run$/);
     // Columns line up: "Result" starts at the same place on every line.
     const at = lines.map((l) => l.search(/PASS|NOT ENOUGH|Result/));
     expect(new Set(at).size).toBe(1);
   });
 
-  it("says plainly when a flag's labels are untrustworthy", () => {
-    const [, line] = formatResultsTable([{ evaluation: evaluation({ flag: "several_asks" }), status: "labels untrustworthy", flip: null }]);
+  it("says plainly when a flag's labels are untrustworthy, with the raw rule the coach eval applies", () => {
+    const e = evaluation({ flag: "several_asks", status: "labels untrustworthy", threshold: 0.37 });
+    const [, line] = formatResultsTable([{ evaluation: e, status: "labels untrustworthy", flip: null }]);
     expect(line).toMatch(/^several_asks\s+LABELS UNTRUSTWORTHY\s+0\.94/);
+    expect(line).toMatch(/raw 0\.50 \(0\.37 not used\)/);
+  });
+
+  it("marks a threshold fitted for a flag without enough data as not used", () => {
+    const e = evaluation({ flag: "filled_in_outcome", status: "not enough data", threshold: 0.42 });
+    const [, line] = formatResultsTable([{ evaluation: e, status: "not enough data", flip: null }]);
+    expect(line).toMatch(/\braw 0\.50 \(0\.42 not used\)/);
+    expect(line).not.toMatch(/\s0\.42\s/);
+  });
+
+  it("shows a flip rate from too few replies as not measured", () => {
+    const [, line] = formatResultsTable([{ evaluation: evaluation(), status: "pass", flip: { replies: 12, flipped: 0, rate: 0, pass: null } }]);
+    expect(line).toMatch(/not measured \(12 compared\)$/);
   });
 });
