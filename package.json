@@ -10,6 +10,8 @@
   "scripts": {
     "chat": "tsx scripts/chat.ts",
     "eval": "tsx scripts/eval.ts",
+    "jev:label": "tsx scripts/jev-label.ts",
+    "jev:eval": "tsx scripts/jev-eval.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "npm run typecheck && npm test"

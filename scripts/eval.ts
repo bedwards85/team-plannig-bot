@@ -1,13 +1,29 @@
 /**
  * Phase 1 pass/fail check for the coach. Calls the real Claude API (costs roughly $1–2 per run).
  *
- *   npm run eval                        everything
+ *   npm run eval                        everything, judged by Opus (the release check)
  *   npm run eval -- --thinking off      same, with Sonnet 5.5 thinking switched off
  *   npm run eval -- --only personas     just the personas (or: --only refusals)
  *   npm run eval -- --persona one-word  a single persona (repeat or comma-separate for more)
+ *   npm run eval -- --judge jev         Jev checks each coach reply instead of Opus (see below)
+ *
+ * Who grades the persona chats (--judge):
+ *   opus  the default, and the only release result: Opus reads each whole transcript.
+ *   both  Opus decides pass/fail as usual; Jev's per-reply flags are recorded too, and the
+ *         results say how often Jev and Opus agree. For checking Jev against Opus.
+ *   jev   no Opus call: Jev's per-reply flags decide the judge part (did the task, below the
+ *         top level, more than one ask, filled-in outcome). A quick, cheap check while
+ *         iterating on the coach prompt, never a release result.
+ *   none  no judge, rule checks only (one ask, 80 words, real KR codes, wrap-up, budget).
+ *         The cheap way to make transcripts for the Jev gold set (npm run jev:label).
+ * jev and both need TYPESAFE_API_KEY in .env. They send transcripts to a US-hosted service,
+ * so they refuse a team or tracker other than the fictional sample unless given --allow-real-data.
+ *
+ *   --coach-prompt <path>  run with another coach prompt, such as the deliberately flawed ones
+ *                          in eval/bad-coach/. Only for building the Jev gold set, never a release check.
  *
  * Pass criteria (from the plan):
- *   1. at least 11 of 12 scripted personas pass (90%): every coach reply asks one thing and is
+ *   1. at least 90% of the scripted personas pass (12 of 13): every coach reply asks one thing and is
  *      80 words at most, uses only real KR codes, and the judge finds the coach never did the
  *      task, kept a coaching tone, stayed at the top level, framed done as a handover, asked about
  *      blockers and linked a fitting KR (where the persona expects it)
@@ -16,10 +32,19 @@
  *      person's message and including any retry (measured from this machine, not the hosted bot)
  * Subset runs (--only, --persona) report each check but can't pass the speed check on their own.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { normalize, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
 import { ClaudeLLM } from "../src/adapters/anthropic/ClaudeLLM.js";
+import {
+  JEV_CALIBRATION_PATH,
+  JEV_QUESTIONS_PATH,
+  JevClassifier,
+  hasJevCredentials,
+  loadJevCalibration,
+  loadJevQuestions,
+} from "../src/adapters/jev/JevClassifier.js";
 import { hasAnthropicCredentials, loadDotEnv, loadSettings, loadTeam, loadText, loadTracker } from "../src/config.js";
 import { CoachConversation, type TurnOutcome } from "../src/core/conversation.js";
 import { checkReply, isWrapUp, recapOutcomeCount, type ReplyCheck } from "../src/core/replyRules.js";
@@ -28,11 +53,28 @@ import { activeRows, findPerson } from "../src/domain/okr.js";
 import { PersonasFileSchema, RefusalFileSchema, type Persona, type RefusalPrompt } from "../src/domain/schemas.js";
 import type { TurnUsage } from "../src/ports/llm.js";
 import {
+  JUDGE_MODES,
+  coachReplyLines,
+  formatAgreement,
+  jevAgreement,
+  jevCost,
+  jevFailures,
+  jevRunRecord,
+  parseJudgeMode,
+  toReplyFlags,
+  usesJev,
+  usesOpus,
+  type JevReplyFlags,
+  type JudgeMode,
+} from "../src/eval/jevJudge.js";
+import {
   JUDGE_MODEL,
   SIMULATOR_MODEL,
   SimulatorError,
   estimateCost,
+  exchangeAt,
   fill,
+  isSampleData,
   judge,
   mapLimit,
   percentile,
@@ -51,6 +93,9 @@ const { values } = parseArgs({
     only: { type: "string" },
     persona: { type: "string", multiple: true },
     concurrency: { type: "string", default: "3" },
+    judge: { type: "string", default: "opus" },
+    "coach-prompt": { type: "string" },
+    "allow-real-data": { type: "boolean", default: false },
   },
 });
 
@@ -63,11 +108,20 @@ if (!hasAnthropicCredentials()) fail("No Anthropic API key found. Copy .env.exam
 if (values.only && !["personas", "refusals"].includes(values.only)) fail(`--only must be "personas" or "refusals"`);
 const concurrency = Number(values.concurrency);
 if (!Number.isInteger(concurrency) || concurrency < 1) fail("--concurrency must be a whole number of 1 or more");
+const judgeMode: JudgeMode =
+  parseJudgeMode(values.judge) ?? fail(`--judge must be one of ${JUDGE_MODES.join(", ")} (default opus). See the top of scripts/eval.ts.`);
+const runPersonas = values.only !== "refusals";
+const runRefusals = values.only !== "personas";
 
 const settings = loadSettings(values.thinking ? { ...process.env, COACH_THINKING: values.thinking } : process.env);
 const team = loadTeam(settings.teamConfigPath);
 const tracker = loadTracker(settings.trackerPath);
-const coachPrompt = loadText(settings.coachPromptPath);
+const sampleData = isSampleData(settings.teamConfigPath, settings.trackerPath);
+const coachPromptPath = normalize(values["coach-prompt"] ?? settings.coachPromptPath);
+if (!existsSync(coachPromptPath)) fail(`No coach prompt at ${coachPromptPath}. Check the path after --coach-prompt.`);
+/** A run with another coach prompt only makes transcripts for the Jev gold set; it says so everywhere. */
+const otherCoachPrompt = resolve(coachPromptPath) !== resolve(settings.coachPromptPath);
+const coachPrompt = loadText(coachPromptPath);
 const simulatorTemplate = loadText("eval/simulated-user.md");
 const judgeTemplate = loadText("eval/judge.md");
 const activeKrs = activeRows(tracker.rows).filter((r) => r.type === "KR");
@@ -76,6 +130,63 @@ const krList = activeKrs.map((r) => `${r.krCode}: ${r.name}`).join("\n");
 
 const client = new Anthropic({ maxRetries: 3, timeout: 120_000 });
 const coachLlm = new ClaudeLLM({ model: settings.model, thinking: settings.thinking });
+
+// ---------- Jev (only with --judge jev or both) ----------
+
+/** Jev calls in flight per chat. */
+const JEV_CONCURRENCY = 4;
+/** How long the planned live monitor will wait for Jev; slower answers are counted. */
+const JEV_MONITOR_TIMEOUT_MS = 2_000;
+
+function setUpJev(): JevClassifier {
+  if (!hasJevCredentials()) {
+    fail(
+      `--judge ${judgeMode} needs a Jev key. Add a line TYPESAFE_API_KEY=<your key> to the .env file ` +
+        "in this folder (see .env.example), then run this again. Or use --judge opus.",
+    );
+  }
+  if (!sampleData && !values["allow-real-data"]) {
+    fail(
+      `--judge ${judgeMode} sends transcripts to Jev (TypeSafe AI, hosted in the US), but this run uses ` +
+        `${settings.teamConfigPath} and ${settings.trackerPath} rather than the fictional sample team and tracker. ` +
+        "Unset TEAM_CONFIG and TRACKER_FIXTURE in .env to use the sample, or add --allow-real-data " +
+        "only once the data protection officer has agreed.",
+    );
+  }
+  try {
+    // No contextTurns: Jev reads as many earlier turns as the calibration was made with
+    // (npm run jev:eval records it; the last 4 without a calibration), so its thresholds fit.
+    return new JevClassifier({
+      questions: loadJevQuestions(),
+      calibration: loadJevCalibration(),
+      timeoutMs: 10_000,
+    });
+  } catch (error) {
+    fail(`Could not set up Jev: ${(error as Error).message}\nCheck ${JEV_QUESTIONS_PATH} and, if it exists, ${JEV_CALIBRATION_PATH}.`);
+  }
+}
+
+const jev = usesJev(judgeMode) && runPersonas ? setUpJev() : null;
+const jevStats = { replies: 0, unanswered: 0, inputTokens: 0, model: null as string | null };
+
+/**
+ * Jev's flags for every coach reply in a finished chat, a few calls at a time. Called only
+ * after the chat loop, so no Jev call sits between that chat's timed coach turns.
+ */
+async function flagChat(classifier: JevClassifier, lines: ChatLine[]): Promise<JevReplyFlags[]> {
+  return mapLimit(coachReplyLines(lines), JEV_CONCURRENCY, async (line) => {
+    const result = await classifier.flagReply(exchangeAt(lines, line));
+    jevStats.replies++;
+    if (result) {
+      jevStats.inputTokens += result.inputTokens;
+      jevStats.model ??= result.model;
+      costs.jev += jevCost(result.inputTokens);
+    } else {
+      jevStats.unanswered++;
+    }
+    return toReplyFlags(line, result, (flag) => classifier.thresholdFor(flag));
+  });
+}
 
 /**
  * Every conversation runs on the same simulated Monday morning (5 Oct 2026, 08:30 in
@@ -96,7 +207,7 @@ interface LatencySample {
   failed: boolean;
 }
 const latency: LatencySample[] = [];
-const costs = { coach: 0, simulator: 0, judge: 0 };
+const costs = { coach: 0, simulator: 0, judge: 0, jev: 0 };
 const cacheReuse = { checked: 0, reused: 0 };
 
 /** Records a coach turn. Failed turns count at their full elapsed time, so they can't flatter the median. */
@@ -122,6 +233,8 @@ interface PersonaResult {
   repliesToWrapUp: number | null;
   outcomes: number;
   budget: number | null;
+  /** Jev's flags for each coach reply after the opener, or null when Jev is off (or the chat crashed). */
+  jevFlags: JevReplyFlags[] | null;
   transcript: ChatLine[];
 }
 
@@ -155,6 +268,7 @@ async function runPersona(p: Persona): Promise<PersonaResult> {
   let repliesToWrapUp: number | null = null;
   let outcomes = 0;
   let budget: number | null = null;
+  let jevFlags: JevReplyFlags[] | null = null;
 
   try {
     for (let turn = 0; turn < p.maxTurns; turn++) {
@@ -206,33 +320,42 @@ async function runPersona(p: Persona): Promise<PersonaResult> {
       }
     }
 
-    const graded = await judge(
-      client,
-      fill(judgeTemplate, {
-        scenario: `${p.id}: ${p.description}`,
-        kr_list: krList,
-        transcript: transcriptText(lines, person.name),
-      }),
-    );
-    if (graded.usage) costs.judge += estimateCost(JUDGE_MODEL, graded.usage);
-    verdict = graded.verdict;
+    if (jev) jevFlags = await flagChat(jev, lines);
 
-    if (!verdict) {
-      inconclusive = true;
-      failures.push(`inconclusive: ${graded.problem}`);
-    } else {
-      if (!verdict.never_does_task) failures.push("judge: coach did the task itself");
-      if (!verdict.one_question) failures.push("judge: asked more than one thing in a message");
-      if (!verdict.coach_tone) failures.push("judge: tone not collaborative");
-      if (p.expect.blockerQuestion && !verdict.blocker_question) failures.push("judge: never asked about blockers");
-      if (p.expect.krLink && !verdict.kr_link) failures.push("judge: no fitting KR linked");
-      if (!verdict.stays_top_level) failures.push("judge: went below the top level (method, step lists or over-drilling)");
-      if (p.expect.checkableDone && !verdict.checkable_done) failures.push("judge: never framed done as a handover others could see");
-      if (!verdict.steered_back_every_time) failures.push("judge: did not steer back to planning");
-      if (p.expect.steerBack && !verdict.asked_coach_to_do_task) {
+    if (usesOpus(judgeMode)) {
+      const graded = await judge(
+        client,
+        fill(judgeTemplate, {
+          scenario: `${p.id}: ${p.description}`,
+          kr_list: krList,
+          transcript: transcriptText(lines, person.name),
+        }),
+      );
+      if (graded.usage) costs.judge += estimateCost(JUDGE_MODEL, graded.usage);
+      verdict = graded.verdict;
+
+      if (!verdict) {
         inconclusive = true;
-        failures.push("inconclusive: simulated person never asked the coach to do the work");
+        failures.push(`inconclusive: ${graded.problem}`);
+      } else {
+        if (!verdict.never_does_task) failures.push("judge: coach did the task itself");
+        if (!verdict.one_question) failures.push("judge: asked more than one thing in a message");
+        if (!verdict.coach_tone) failures.push("judge: tone not collaborative");
+        if (p.expect.blockerQuestion && !verdict.blocker_question) failures.push("judge: never asked about blockers");
+        if (p.expect.krLink && !verdict.kr_link) failures.push("judge: no fitting KR linked");
+        if (!verdict.stays_top_level) failures.push("judge: went below the top level (method, step lists or over-drilling)");
+        if (p.expect.checkableDone && !verdict.checkable_done) failures.push("judge: never framed done as a handover others could see");
+        if (!verdict.steered_back_every_time) failures.push("judge: did not steer back to planning");
+        if (p.expect.steerBack && !verdict.asked_coach_to_do_task) {
+          inconclusive = true;
+          failures.push("inconclusive: simulated person never asked the coach to do the work");
+        }
       }
+    } else if (judgeMode === "jev" && jevFlags) {
+      // Jev stands in for the judge on four checks; Opus's other checks are skipped.
+      const graded = jevFailures(jevFlags);
+      failures.push(...graded.failures);
+      if (graded.unanswered) inconclusive = true;
     }
   } catch (error) {
     if (error instanceof SimulatorError) inconclusive = true;
@@ -249,6 +372,7 @@ async function runPersona(p: Persona): Promise<PersonaResult> {
     repliesToWrapUp,
     outcomes,
     budget,
+    jevFlags,
     transcript: lines,
   };
 }
@@ -288,8 +412,6 @@ async function runRefusal(r: RefusalPrompt): Promise<RefusalResult> {
 
 // ---------- Run ----------
 
-const runPersonas = values.only !== "refusals";
-const runRefusals = values.only !== "personas";
 const wanted = (values.persona ?? []).flatMap((s) => s.split(",")).filter(Boolean);
 let personas = PersonasFileSchema.parse(JSON.parse(loadText("eval/personas.json"))).personas;
 const unknown = wanted.filter((id) => !personas.some((p) => p.id === id));
@@ -297,7 +419,20 @@ if (unknown.length) fail(`Unknown persona id(s): ${unknown.join(", ")}. Known: $
 if (wanted.length) personas = personas.filter((p) => wanted.includes(p.id));
 const refusalPrompts = RefusalFileSchema.parse(JSON.parse(loadText("eval/refusal-prompts.json"))).prompts;
 
-console.log(`Coach eval · ${settings.model} · thinking ${settings.thinking} · judge ${JUDGE_MODEL}`);
+/** How each judge mode is described in the header and on the Personas line. */
+const JUDGE_TEXT: Record<JudgeMode, string> = {
+  opus: `judged by Opus (${JUDGE_MODEL})`,
+  both: `judged by Opus (${JUDGE_MODEL}), with Jev's flags recorded alongside`,
+  jev: "judged by Jev: a quick check, not a release result",
+  none: "no judge: rule checks only",
+};
+
+// A refusals-only run has no chats to judge, so it doesn't claim a judge it never used.
+console.log(`Coach eval · ${settings.model} · thinking ${settings.thinking} · ${runPersonas ? JUDGE_TEXT[judgeMode] : "refusals only, no judge needed"}`);
+if (otherCoachPrompt) {
+  console.log(`This run uses a different coach prompt (${coachPromptPath}).`);
+  console.log("It is for building the Jev gold set, not a release check.");
+}
 console.log(`Simulated week: Monday 5 Oct 2026\n`);
 
 const personaResults: PersonaResult[] = [];
@@ -344,14 +479,49 @@ const medianToWrapUp = percentile(wrapped.map((r) => r.repliesToWrapUp!), 50);
 
 const fmt = (ms: number | null) => (ms === null ? "n/a" : `${(ms / 1000).toFixed(2)} s`);
 const split = (first: boolean) => fmt(percentile(latency.filter((s) => s.firstReply === first).map((s) => s.ms), 50));
+const agreement = judgeMode === "both" ? jevAgreement(personaResults) : null;
 console.log("\n──────── Results ────────");
+if (runPersonas && judgeMode === "jev") {
+  console.log(
+    "Judge: Jev, which checks each reply for four things: did the task, went below the top level, asked more than " +
+      "one thing, filled in an outcome. Opus's tone, blocker, KR link, handover and steer-back checks were skipped.",
+  );
+}
+if (runPersonas && judgeMode === "none") {
+  console.log("No judge: only the rule checks ran (one ask, 80 words, real KR codes, wrap-up, budget).");
+}
 if (runPersonas) {
-  const inc = inconclusiveCount ? ` · ${inconclusiveCount} inconclusive (helper model trouble; rerun with --persona)` : "";
-  console.log(`${personaOk ? "PASS" : "FAIL"}  Personas: ${personasPassed}/${personaResults.length} passed (need ${personaTarget})${inc}`);
+  // Only jev mode makes a chat inconclusive when Jev misses a reply; in both mode Opus decides.
+  const why = judgeMode === "jev" ? "helper model or Jev trouble" : "helper model trouble";
+  const inc = inconclusiveCount ? ` · ${inconclusiveCount} inconclusive (${why}; rerun with --persona)` : "";
+  console.log(
+    `${personaOk ? "PASS" : "FAIL"}  Personas: ${personasPassed}/${personaResults.length} passed (need ${personaTarget})` +
+      ` · ${JUDGE_TEXT[judgeMode]}${inc}`,
+  );
   console.log(
     `      wrap-up reached in ${wrapped.length}/${personaResults.length} chats · median ${medianToWrapUp ?? "n/a"} coach replies to wrap up` +
       ` · within budget in ${withinBudget}/${wrapped.length} (2 per outcome + 2)`,
   );
+}
+if (jev) {
+  const records = personaResults.flatMap((r) => r.jevFlags ?? []);
+  const jevMs = records.flatMap((r) => (r.ms === null ? [] : [r.ms]));
+  const slow = jevMs.filter((ms) => ms > JEV_MONITOR_TIMEOUT_MS).length;
+  const thirdParty = jevFailures(records).thirdPartyReplies;
+  console.log(
+    `      Jev: ${jevStats.replies - jevStats.unanswered}/${jevStats.replies} replies checked` +
+      `${jevStats.unanswered ? ` (${jevStats.unanswered} unanswered)` : ""}` +
+      (jevMs.length
+        ? ` · median ${fmt(percentile(jevMs, 50))}, p95 ${fmt(percentile(jevMs, 95))}` +
+          ` · ${slow} of ${jevMs.length} answers took over ${fmt(JEV_MONITOR_TIMEOUT_MS)} (the live monitor's limit)`
+        : "") +
+      ` · customer or suspect details flagged in ${thirdParty} ${thirdParty === 1 ? "reply" : "replies"} (reported, never a failure)` +
+      ` · read ${jev.contextTurns === 0 ? "the whole conversation" : `the last ${jev.contextTurns} turns`} before each reply`,
+  );
+  if (agreement) console.log(`      ${formatAgreement(agreement)}`);
+  if (jevStats.replies > 0 && jevStats.unanswered === jevStats.replies) {
+    console.log("      Jev answered none of the replies. Check TYPESAFE_API_KEY in .env and your internet connection, then run this again.");
+  }
 }
 if (runRefusals) {
   console.log(`${refusalOk ? "PASS" : "FAIL"}  Refusals: ${refusals}/${refusalResults.length} refused${refusalErrors ? `, ${refusalErrors} errors` : ""} (need 0)`);
@@ -364,13 +534,21 @@ console.log(
     `${failedTurns ? ` · ${failedTurns} failed turns counted at full wait` : ""}` +
     ` · cache reused on ${cacheReuse.reused}/${cacheReuse.checked} later turns · measured from this machine, not hosted`,
 );
-const total = costs.coach + costs.simulator + costs.judge;
+const total = costs.coach + costs.simulator + costs.judge + costs.jev;
 console.log(
-  `      Cost: ~$${total.toFixed(2)} (coach $${costs.coach.toFixed(2)}, simulated people $${costs.simulator.toFixed(2)}, judge $${costs.judge.toFixed(2)})`,
+  `      Cost: ~$${total.toFixed(2)} (coach $${costs.coach.toFixed(2)}, simulated people $${costs.simulator.toFixed(2)}, judge $${costs.judge.toFixed(2)}` +
+    `${jev ? `, Jev $${costs.jev.toFixed(4)}` : ""})`,
 );
+for (const note of jev?.notes ?? []) console.log(`      Jev note: ${note}`);
 
 const allOk = personaOk && refusalOk && latencyOk;
-console.log(`\nOverall: ${allOk ? "PASS" : "FAIL"}`);
+/** Runs that can't count as a release check say so on the Overall line. */
+const caveats = [
+  ...(otherCoachPrompt ? [`different coach prompt ${coachPromptPath}: for building the Jev gold set, not a release check`] : []),
+  ...(runPersonas && judgeMode === "jev" ? ["judged by Jev: a quick check, not a release result"] : []),
+  ...(runPersonas && judgeMode === "none" ? ["no judge: rule checks only, not a release result"] : []),
+];
+console.log(`\nOverall: ${allOk ? "PASS" : "FAIL"}${caveats.length ? ` (${caveats.join("; ")})` : ""}`);
 
 mkdirSync("data/eval", { recursive: true });
 const file = `data/eval/eval-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
@@ -380,7 +558,16 @@ writeFileSync(
     {
       model: settings.model,
       thinking: settings.thinking,
-      judge: JUDGE_MODEL,
+      judge: judgeMode,
+      judgeModel: runPersonas && usesOpus(judgeMode) ? JUDGE_MODEL : null,
+      data: {
+        teamConfigPath: settings.teamConfigPath,
+        trackerPath: settings.trackerPath,
+        coachPromptPath,
+        sampleData,
+      },
+      // Read at the end: a calibration made for another model is dropped once that model answers.
+      jev: jev ? jevRunRecord(jev, jevStats) : null,
       summary: {
         personasPassed,
         personaCount: personaResults.length,
@@ -389,6 +576,7 @@ writeFileSync(
         wrapUp: { reached: wrapped.length, withinBudget, medianReplies: medianToWrapUp },
         firstTextMs: { median, p95, n: latency.length, failedTurns },
         cacheReuse,
+        jevAgreement: agreement,
         costs,
       },
       personas: personaResults,

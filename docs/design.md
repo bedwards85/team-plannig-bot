@@ -412,9 +412,10 @@ Jev is a classifier from TypeSafe AI, in early access since September 2026. You 
 It also reports:
 - **Repeatability:** `--repeats 30 --sample 50` asks about the same 50 replies 30 times each. At most 5% of replies may flip between yes and no.
 - **Speed:** median (p50) and 95th-percentile (p95) time per call, and the share over 2 seconds, measured from the machine running the script (the team lead's laptop, not the hosted bot).
-- **Context:** `--context-turns 0` sends the whole conversation instead of the default last four turns; the better of the two is kept.
+- **Context:** `--context-turns 0 --no-write` tries the whole conversation instead of the last four turns. If it scores better, running it again without `--no-write` switches to it: the calibration file records the setting and the eval follows it.
+- **Trust in the labels:** how often the team lead's hand labels agree with Opus's on the randomly picked rows. Once 30 are labelled for a flag, under 80% agreement marks that flag "labels untrustworthy": it can't pass and isn't calibrated until its definition is tightened and the replies relabelled.
 
-It writes `eval/jev-calibration.json` (threshold and recalibration per flag, used only with the same Jev model and question version) and `data/jev-gold/human-labels.csv`: at least 100 replies, including every one where Jev and Opus disagree, for the team lead to mark Y or N in Excel. Human labels win over Opus.
+It writes `eval/jev-calibration.json` (threshold and recalibration per flag, and how many turns Jev read; used only with the same Jev model and question version). The first run also creates `data/jev-gold/human-labels.csv` with 100 replies for the team lead to mark Y or N in Excel: up to 70 where Jev and Opus disagree most clearly, taken in turn across the five flags, and the rest picked at random, mixed so the labeller can't tell which is which. Later runs only read the sheet; `--more-labels` adds another round. Rows are only ever added, and human labels win over Opus.
 
 **Tuning without fine-tuning.** Everyone uses the same Jev model. Tuning means rewording questions and criteria, splitting a question in two, setting thresholds per flag and recalibrating on our labels. After any wording change, bump the version in `eval/jev-questions.json` and rerun `npm run jev:eval`.
 

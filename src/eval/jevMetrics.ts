@@ -40,7 +40,8 @@ export function expectedCalibrationError(items: Scored[], bins = 10): number | n
   if (items.length === 0) return null;
   const sums = Array.from({ length: bins }, () => ({ n: 0, p: 0, y: 0 }));
   for (const { p, y } of items) {
-    const b = sums[Math.min(Math.floor(p * bins), bins - 1)]!;
+    // Clamped at both ends: p = 1 joins the last bin, and a stray value below 0 the first.
+    const b = sums[Math.min(Math.max(Math.floor(p * bins), 0), bins - 1)]!;
     b.n++;
     b.p += p;
     b.y += y ? 1 : 0;
@@ -51,12 +52,25 @@ export function expectedCalibrationError(items: Scored[], bins = 10): number | n
 /** One step of an isotonic map: inputs from `lo` to `hi` map to `value`. */
 export type IsotonicBlock = [lo: number, hi: number, value: number];
 
-/** Fits a non-decreasing map from score to observed rate (pool-adjacent-violators). */
+/**
+ * Fits a non-decreasing map from score to observed rate (pool-adjacent-violators).
+ * Equal scores are pooled first, so the fit does not depend on the order of the items.
+ */
 export function fitIsotonic(items: Scored[]): IsotonicBlock[] {
   const sorted = [...items].sort((a, b) => a.p - b.p);
-  const blocks: Array<{ lo: number; hi: number; sum: number; n: number }> = [];
+  const groups: Array<{ lo: number; hi: number; sum: number; n: number }> = [];
   for (const { p, y } of sorted) {
-    blocks.push({ lo: p, hi: p, sum: y ? 1 : 0, n: 1 });
+    const same = groups[groups.length - 1];
+    if (same && same.lo === p) {
+      same.sum += y ? 1 : 0;
+      same.n++;
+    } else {
+      groups.push({ lo: p, hi: p, sum: y ? 1 : 0, n: 1 });
+    }
+  }
+  const blocks: typeof groups = [];
+  for (const group of groups) {
+    blocks.push(group);
     while (blocks.length > 1) {
       const last = blocks[blocks.length - 1]!;
       const prev = blocks[blocks.length - 2]!;
@@ -108,9 +122,19 @@ export function flipRate(decisionsPerItem: boolean[][]): number | null {
   return usable.filter((d) => d.some((x) => x !== d[0])).length / usable.length;
 }
 
-/** Stable 70/30 split by id, so the same item always lands on the same side. */
+/**
+ * Stable 70/30 split by id, so the same item always lands on the same side.
+ * The final mixing step matters: without it the hash's last bit just follows the
+ * id's characters, so about half of all ids went to tuning 80% of the time and the
+ * other half 60%, rather than all of them 70%.
+ */
 export function isCalibrationSplit(id: string): boolean {
   let h = 2166136261;
-  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619) >>> 0;
-  return h % 10 < 7;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 2 ** 32 < 0.7;
 }

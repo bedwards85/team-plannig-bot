@@ -33,9 +33,23 @@ export const JevCalibrationSchema = z.object({
   model: z.string(),
   questionsVersion: z.string(),
   createdAt: z.string(),
+  /**
+   * Earlier turns Jev read before each reply when this was made (0 = the whole conversation).
+   * Probabilities and thresholds only fit that setting, so the classifier uses it too.
+   * Files made before it was recorded were all made with the last 4 turns.
+   */
+  contextTurns: z.number().int().min(0).optional(),
   flags: z.partialRecord(z.enum(REPLY_FLAGS), FlagCalibrationSchema),
 });
 export type JevCalibration = z.infer<typeof JevCalibrationSchema>;
+
+/** Earlier turns sent with each reply when nothing says otherwise: fewer, relevant turns read better than a whole transcript. */
+export const DEFAULT_CONTEXT_TURNS = 4;
+
+/** The context setting a calibration was made with: its own, 4 for files made before it was recorded, 4 with none. */
+export function calibrationContextTurns(calibration: Pick<JevCalibration, "contextTurns"> | null | undefined): number {
+  return calibration?.contextTurns ?? DEFAULT_CONTEXT_TURNS;
+}
 
 export const JEV_QUESTIONS_PATH = "eval/jev-questions.json";
 export const JEV_CALIBRATION_PATH = "eval/jev-calibration.json";
@@ -64,7 +78,11 @@ export interface JevClassifierOptions {
   /** Per-attempt timeout. The eval can wait; a live monitor should give up fast. */
   timeoutMs?: number;
   maxRetries?: number;
-  /** How many earlier turns go into the state. Fewer, relevant turns read better than a whole transcript. */
+  /**
+   * How many earlier turns go into the state; 0 (or Infinity) sends the whole conversation.
+   * Leave it out to use the setting the calibration was made with (4 without a calibration),
+   * so the probabilities stay on the scale the thresholds were chosen for.
+   */
   contextTurns?: number;
   /** For tests: a stand-in for the global fetch. */
   fetch?: (input: string, init?: RequestInit) => Promise<Response>;
@@ -80,7 +98,8 @@ export class JevClassifier implements ClassifierPort {
   private readonly questions: Record<ReplyFlag, NoulQuestion>;
   /** Dropped (set to null) once Jev answers with a different model, so threshold and probabilities stay on one scale. */
   private calibration: JevCalibration | null;
-  private readonly contextTurns: number;
+  /** Earlier turns sent with each reply; 0 = the whole conversation. */
+  private readonly turns: number;
   private readonly timeoutMs: number;
 
   constructor(private readonly options: JevClassifierOptions) {
@@ -94,7 +113,10 @@ export class JevClassifier implements ClassifierPort {
       fetch: options.fetch,
     });
     this.timeoutMs = options.timeoutMs ?? 10_000;
-    this.contextTurns = options.contextTurns ?? 4;
+    // The calibration as given, even if it is set aside below for another question version:
+    // its context setting is still the one the team chose (jev:eval defaults to it too).
+    const turns = options.contextTurns ?? calibrationContextTurns(options.calibration);
+    this.turns = Number.isFinite(turns) ? turns : 0;
     this.questions = Object.fromEntries(
       REPLY_FLAGS.map((f) => [f, { type: "noul", ...options.questions.flags[f] } satisfies NoulQuestion]),
     ) as Record<ReplyFlag, NoulQuestion>;
@@ -114,6 +136,11 @@ export class JevClassifier implements ClassifierPort {
     return this.options.questions.version;
   }
 
+  /** Earlier turns sent with each reply (0 = the whole conversation), for recording in run files. */
+  get contextTurns(): number {
+    return this.turns;
+  }
+
   thresholdFor(flag: ReplyFlag): number {
     return this.calibration?.flags[flag]?.threshold ?? DEFAULT_THRESHOLD;
   }
@@ -123,9 +150,8 @@ export class JevClassifier implements ClassifierPort {
     try {
       const result = await this.client.systemOne(
         {
-          // slice(-0) would return everything, so zero turns needs its own case.
           state: {
-            conversation_so_far: this.contextTurns > 0 ? exchange.context.slice(-this.contextTurns) : [],
+            conversation_so_far: this.turns > 0 ? exchange.context.slice(-this.turns) : [...exchange.context],
             reply_to_check: exchange.reply,
           },
           questions: this.questions,
@@ -135,7 +161,7 @@ export class JevClassifier implements ClassifierPort {
       const useCalibration = this.calibration !== null && this.calibration.model === result.model;
       if (this.calibration && !useCalibration) {
         this.notes.add(
-          `Calibration is for model ${this.calibration.model}, but ${result.model} answered: using raw probabilities and threshold ${DEFAULT_THRESHOLD}.`,
+          `Calibration is for model ${this.calibration.model}, but ${result.model} answered: using raw probabilities and threshold ${DEFAULT_THRESHOLD}. Rerun npm run jev:eval.`,
         );
         // Its thresholds were chosen on recalibrated probabilities, so they no longer apply either.
         this.calibration = null;
@@ -143,7 +169,8 @@ export class JevClassifier implements ClassifierPort {
       const probabilities = {} as FlagProbabilities;
       for (const flag of REPLY_FLAGS) {
         const raw = result.answers[flag]?.noul;
-        if (typeof raw !== "number" || Number.isNaN(raw)) return null;
+        // Anything outside 0 to 1 is not a probability, so the answer is unusable.
+        if (typeof raw !== "number" || !(raw >= 0 && raw <= 1)) return null;
         const blocks: IsotonicBlock[] | undefined = useCalibration ? this.calibration!.flags[flag]?.isotonic : undefined;
         probabilities[flag] = blocks?.length ? applyIsotonic(blocks, raw) : raw;
       }

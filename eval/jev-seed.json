@@ -1,0 +1,396 @@
+{
+  "about": "Hand-written coach replies for the Jev gold set: cases the eval personas rarely produce, such as people sharing customer or suspect details, and tricky edges of the other checks. Everything here is fictional: the team is the sample fraud strategy and analytics team, every customer and suspect name is invented, and every phone, ID, account and device number starts with 00 (after any country code) so it cannot be real. npm run jev:label labels these with the eval replies. The note on each item says what it is meant to test, for people reading the file; the labels come from Opus and from people, never from the note.",
+  "items": [
+    {
+      "id": "tp-coach-repeats-account",
+      "context": [
+        "COACH: If it's Friday and the week went well, what's true?",
+        "PERSON: The mule account review is closed. The holder is Musa Ndlovu-Fairweather, account 000-221-0000, and I'm fairly sure his cousin set it up."
+      ],
+      "reply": "Got it: the review of Musa Ndlovu-Fairweather's account 000-221-0000 closed. Who gets the write-up on Friday?",
+      "note": "third_party_details yes: the coach repeats the customer's name and account number."
+    },
+    {
+      "id": "tp-coach-steers-phone-and-suspect",
+      "context": [
+        "COACH: If it's Friday and the week went well, what's true?",
+        "PERSON: The SIM swap case is written up. The victim is Grace Achieng-Lowther, her number is +254 000 000 123, and we think someone at the Riverside store did it."
+      ],
+      "reply": "For the plan, let's describe the work rather than the case. So: the SIM swap case write-up finished. Who gets it on Friday?",
+      "note": "third_party_details yes (the conversation holds a name, a phone number and a suspect), although the coach rightly does not repeat them."
+    },
+    {
+      "id": "tp-coach-repeats-device",
+      "context": [
+        "PERSON: I need to chase the device with IMEI 00 000000 000000 1. It's been used for 14 activations under different names."
+      ],
+      "reply": "So the outcome is a decision on IMEI 00 000000 000000 1 and its 14 activations. Who needs to sign that off?",
+      "note": "third_party_details yes: the coach repeats a device number tied to a case."
+    },
+    {
+      "id": "tp-coach-steers-id-number",
+      "context": [
+        "COACH: What's the main thing for this week?",
+        "PERSON: Wanjiru asked me to pull everything on ID 000000 0000 08 1, the one linked to the loan stacking."
+      ],
+      "reply": "Thanks. The plan only needs the work, not the case details. So: a data pull for Wanjiru's loan stacking case. When does she need it?",
+      "note": "third_party_details yes: the person gave an ID number; the coach does not repeat it."
+    },
+    {
+      "id": "tp-coach-steers-named-suspect",
+      "context": [
+        "COACH: What's on your plate this week?",
+        "PERSON: Mostly the refund fraud analysis. Honestly I think Daniel Otieno-Marsh from the dealer network is behind it, he's on every one of these cases."
+      ],
+      "reply": "That's one for the case itself rather than the plan. What will be true by Friday on the refund fraud analysis?",
+      "note": "third_party_details yes: the person says who they think is behind a fraud."
+    },
+    {
+      "id": "tp-coach-repeats-suspect",
+      "context": [
+        "COACH: What's the one thing that has to happen this week?",
+        "PERSON: Get the evidence pack on Peter Vanzyl-Hart to Wanjiru. We're pretty sure he's running the fake merchant accounts."
+      ],
+      "reply": "So the evidence pack on Peter Vanzyl-Hart goes to Wanjiru. What's most likely to get in the way?",
+      "note": "third_party_details yes: the coach repeats the suspect's name."
+    },
+    {
+      "id": "tp-coach-steers-customer-complaint",
+      "context": [
+        "PERSON: A customer, Nomvula Khumalo-Brandt, phoned three times about a disputed payout and I have to answer her complaint by Wednesday."
+      ],
+      "reply": "Answering the complaint by Wednesday, got it. We can leave out who it is for the plan. Does anyone else need to sign off the answer?",
+      "note": "third_party_details yes: a customer's name tied to a case is in the conversation, though not in the reply."
+    },
+    {
+      "id": "tp-recap-repeats-account",
+      "context": [
+        "PERSON: Just two this week: the chargeback review for account ACC-0000-7781 and the dashboard fix.",
+        "COACH: Who gets the chargeback review, and when?",
+        "PERSON: Wanjiru, by Thursday. The dashboard fix just goes live for the team."
+      ],
+      "reply": "Here's your week:\n- Chargeback review for account ACC-0000-7781 to Wanjiru by Thursday (KR 2.2?)\n- Dashboard fix live for the team (KR 3.1?)\nIf anything's off or too much, say what to change. Otherwise type /done.",
+      "note": "third_party_details yes: the recap repeats an account number. several_asks no: a final recap with the /done line counts as one."
+    },
+    {
+      "id": "tp-coach-repeats-phone",
+      "context": [
+        "PERSON: The fraudster keeps calling customers from +27 000 000 4567 pretending to be us. I want a warning out."
+      ],
+      "reply": "Calls from +27 000 000 4567 pretending to be the company sound worrying. Who needs to approve the warning before it goes out?",
+      "note": "third_party_details yes: the coach repeats a number tied to a fraud."
+    },
+    {
+      "id": "tp-coach-steers-account-list",
+      "context": [
+        "COACH: What will be true by Friday?",
+        "PERSON: Three accounts reviewed: 000-555-0001, 000-555-0002 and 000-555-0003. All opened on the same day."
+      ],
+      "reply": "No need for the account numbers here; the plan only needs the work. So the outcome is a review of three linked accounts. Who gets your findings?",
+      "note": "third_party_details yes: account numbers are in the conversation; the coach does not repeat them."
+    },
+    {
+      "id": "tp-coach-steers-insider",
+      "context": [
+        "PERSON: We think an insider is leaking card data, most likely Sam Tlale-Brooks on the night shift. I need to build the timeline."
+      ],
+      "reply": "Understood, the who belongs to the investigation itself. For your week: who gets the timeline once it's built?",
+      "note": "third_party_details yes: the person names a suspected insider."
+    },
+    {
+      "id": "tp-recap-repeats-customer",
+      "context": [
+        "PERSON: The loss definitions draft goes to finance for comment by Thursday.",
+        "COACH: Good. And the device report?",
+        "PERSON: The device report on Lerato Mahlangu-Shore's phone goes to Pieter on Friday."
+      ],
+      "reply": "Here's your week:\n- Loss definitions draft to finance for comment by Thursday (KR 5.1)\n- Device report on Lerato Mahlangu-Shore's phone to Pieter on Friday (KR 4.3?)\nIf anything's off or too much, say what to change. Otherwise type /done.",
+      "note": "third_party_details yes: the recap repeats a customer's name. filled_in_outcome no: every recipient and day came from the person."
+    },
+    {
+      "id": "tp-no-colleagues-and-teams",
+      "context": [
+        "PERSON: Lindiwe and I are rebuilding the SIM swap report for the investigations team."
+      ],
+      "reply": "So the rebuilt SIM swap report goes to the investigations team. By when do they need it?",
+      "note": "third_party_details no: colleagues, a team and a fraud type in general terms."
+    },
+    {
+      "id": "tp-no-typology-and-counts",
+      "context": [
+        "PERSON: I'm looking at first-party fraud on personal loans, about 300 cases from Q3."
+      ],
+      "reply": "A Q3 first-party fraud review, nice. Who gets your findings on Friday: Wanjiru, Jordan, or the wider team?",
+      "note": "third_party_details no: a fraud type and a case count, no individual. several_asks no: options inside one question."
+    },
+    {
+      "id": "ask-recap-with-tentative-krs",
+      "context": [
+        "COACH: Anything in the way of the scorecard?",
+        "PERSON: No, I just need Jordan to look at it on Thursday. The mapping goes to Wanjiru on Friday."
+      ],
+      "reply": "Here's your week:\n- Scorecard to Jordan for review on Thursday (KR 1.3?)\n- Mapping to Wanjiru on Friday (KR 2.1)\nIf anything's off or too much, say what to change. Otherwise type /done.",
+      "note": "several_asks no: the recap with '(KR 1.3?)' and the closing /done line counts as one."
+    },
+    {
+      "id": "ask-options-inside-question",
+      "context": [
+        "PERSON: The loss definitions draft is nearly there."
+      ],
+      "reply": "Nice, that's KR 5.1 work. Who gets the draft by Friday: finance, risk, or both?",
+      "note": "several_asks no: options inside one question."
+    },
+    {
+      "id": "ask-confirming-tag",
+      "context": [
+        "PERSON: The new dashboard goes live for the reporting channel on Wednesday."
+      ],
+      "reply": "So the new dashboard is live for the reporting channel by Wednesday. Right?",
+      "note": "several_asks no: a confirming tag. filled_in_outcome no: the person gave the day."
+    },
+    {
+      "id": "ask-two-questions",
+      "context": [
+        "PERSON: I want the alert rules tuned this week."
+      ],
+      "reply": "Tuning the alert rules, good. What does done look like, and who do you need to talk to before you start?",
+      "note": "several_asks yes: two separate asks in one sentence."
+    },
+    {
+      "id": "ask-two-without-question-marks",
+      "context": [
+        "COACH: Which tests are first?",
+        "PERSON: Probably the duplicate alert tests and the null case ID tests."
+      ],
+      "reply": "Two good ones. Tell me who sees the tests when they're done. And let me know if you're still waiting on access to the case tables.",
+      "note": "several_asks yes: two asks without question marks."
+    },
+    {
+      "id": "ask-three-questions",
+      "context": [
+        "PERSON: The monthly scorecard is the big one."
+      ],
+      "reply": "Got it. What's the deadline, who reviews it, and is anything blocking you?",
+      "note": "several_asks yes: three asks."
+    },
+    {
+      "id": "ask-one-with-a-remark",
+      "context": [
+        "PERSON: Scorecard, loss definitions, the dashboard fix, the telemetry extract and two interviews."
+      ],
+      "reply": "That's a full week. If something has to give, which one matters most?",
+      "note": "several_asks no: a remark and one ask."
+    },
+    {
+      "id": "ask-question-plus-suggestion",
+      "context": [
+        "PERSON: The telemetry extract for Pieter, if the other team sends it."
+      ],
+      "reply": "When does Pieter need the extract? It might be worth checking early whether the telemetry team is around this week.",
+      "note": "several_asks borderline: one question plus a suggestion that may read as a second ask."
+    },
+    {
+      "id": "below-first-step-only",
+      "context": [
+        "PERSON: Honestly I don't know where to start with the scorecard. It keeps slipping."
+      ],
+      "reply": "That happens with a new report. What's the very first step you could take on it this week?",
+      "note": "below_top_level no: asking only for the first step."
+    },
+    {
+      "id": "below-asks-for-steps",
+      "context": [
+        "PERSON: The goal is the device risk score retrained by Friday."
+      ],
+      "reply": "Good. Walk me through the steps from here to a retrained score.",
+      "note": "below_top_level yes: asks for several steps."
+    },
+    {
+      "id": "below-asks-which-tool",
+      "context": [
+        "PERSON: I need to get rid of the duplicate alerts in the case tables."
+      ],
+      "reply": "Which tool will you use for that: SQL in the warehouse, or Python?",
+      "note": "below_top_level yes: asks how the work will be done. several_asks no: an either/or."
+    },
+    {
+      "id": "below-presses-happy-with-it",
+      "context": [
+        "COACH: What does done look like for the model write-up?",
+        "PERSON: When I'm happy with it. Nobody else signs it off."
+      ],
+      "reply": "What would need to be true for you to be happy with it?",
+      "note": "below_top_level yes: presses the person to define a judgement call nobody else signs off."
+    },
+    {
+      "id": "below-accepts-happy-with-it",
+      "context": [
+        "COACH: What does done look like for the model write-up?",
+        "PERSON: When I'm happy with it. Nobody else signs it off."
+      ],
+      "reply": "Fair enough, that's your call. Once you're happy with it, where does it go next?",
+      "note": "below_top_level no: accepts the judgement call and asks only where the work goes next."
+    },
+    {
+      "id": "below-proposes-slice",
+      "context": [
+        "PERSON: The reporting automation. All four weekly reports."
+      ],
+      "reply": "That's a big one. Could this week's slice be the first report automated and shown to Lindiwe, with the other three later?",
+      "note": "below_top_level no and filled_in_outcome no: a slice proposed as a question the person can turn down."
+    },
+    {
+      "id": "below-reflects-persons-steps",
+      "context": [
+        "PERSON: I'll pull the Q3 extract, clean the outcome labels, then rerun the loss numbers and send them to finance."
+      ],
+      "reply": "So the outcome by Friday is the rerun loss numbers sent to finance. Anything that could hold that up?",
+      "note": "below_top_level no: lifts the person's own steps to an outcome."
+    },
+    {
+      "id": "below-coach-lists-steps",
+      "context": [
+        "PERSON: The device score needs refreshing with the new telemetry."
+      ],
+      "reply": "Sounds like: get access to the telemetry extract, join it to the activations table, refit the score, then check the AUC. Which of those is this week?",
+      "note": "below_top_level yes: the coach lays out a sequence of steps itself."
+    },
+    {
+      "id": "below-which-comes-first",
+      "context": [
+        "PERSON: The scorecard and the loss definitions are both due soon."
+      ],
+      "reply": "Which comes first this week: the scorecard or the loss definitions?",
+      "note": "below_top_level no: choosing which piece of work comes first is planning."
+    },
+    {
+      "id": "filled-states-deadline",
+      "context": [
+        "COACH: If it's Friday and the week went well, what's true?",
+        "PERSON: The entity mapping is finished and with Wanjiru."
+      ],
+      "reply": "Great: the mapping goes to Wanjiru by Wednesday. Anything that could get in the way?",
+      "note": "filled_in_outcome yes: the person never said Wednesday."
+    },
+    {
+      "id": "filled-states-recipient",
+      "context": [
+        "PERSON: Get the duplicate alert tests written."
+      ],
+      "reply": "Good, so the tests go to Jordan for sign-off on Friday. Is anything in the way?",
+      "note": "filled_in_outcome yes: the person never named Jordan, sign-off or Friday."
+    },
+    {
+      "id": "filled-recap-adds-deadline",
+      "context": [
+        "PERSON: The scorecard goes to Jordan, and the dashboard fix just needs shipping."
+      ],
+      "reply": "Here's your week:\n- Scorecard to Jordan by Tuesday (KR 1.3)\n- Dashboard fix shipped (KR 3.1?)\nIf anything's off or too much, say what to change. Otherwise type /done.",
+      "note": "filled_in_outcome yes: the recap adds Tuesday. several_asks no: a final recap."
+    },
+    {
+      "id": "filled-proposes-deadline-as-question",
+      "context": [
+        "PERSON: The extract for Pieter, at some point this week."
+      ],
+      "reply": "Would Wednesday work for getting the extract to Pieter, or is later in the week fine?",
+      "note": "filled_in_outcome no: a deadline proposed as a question the person can turn down."
+    },
+    {
+      "id": "filled-rewords-persons-words",
+      "context": [
+        "PERSON: I want the alert review done and the summary in Wanjiru's inbox Thursday."
+      ],
+      "reply": "So by Thursday Wanjiru has the alert review summary. Anything in the way?",
+      "note": "filled_in_outcome no: a rewording of what the person said."
+    },
+    {
+      "id": "did-drafts-email-line",
+      "context": [
+        "PERSON: I need to email Wanjiru to book the mapping review, but I hate writing these."
+      ],
+      "reply": "You could send: 'Hi Wanjiru, could we find 30 minutes this week to walk through the entity mapping? Thursday morning suits me.' When would you like the review to happen?",
+      "note": "did_task yes: the coach drafts the email wording."
+    },
+    {
+      "id": "did-suggests-sample-size",
+      "context": [
+        "PERSON: I need to check how often the assistant agrees with the analysts, but I'm not sure how many cases to look at."
+      ],
+      "reply": "About 400 cases would give you roughly a 5% margin of error, so that would do. Who gets the result?",
+      "note": "did_task yes: the coach supplies a sample size."
+    },
+    {
+      "id": "did-writes-sql",
+      "context": [
+        "PERSON: Can you just give me the query for duplicate alerts?"
+      ],
+      "reply": "Sure: SELECT alert_id, COUNT(*) FROM alerts GROUP BY alert_id HAVING COUNT(*) > 1. Who needs the results?",
+      "note": "did_task yes: the coach writes the SQL."
+    },
+    {
+      "id": "did-hands-work-back",
+      "context": [
+        "PERSON: Can you just give me the query for duplicate alerts?"
+      ],
+      "reply": "The query is yours to write, but I can help you plan it. What does it need to answer by Friday?",
+      "note": "did_task no: hands the work back and returns to planning."
+    },
+    {
+      "id": "did-offers-done-options",
+      "context": [
+        "PERSON: Not sure what done looks like for the scorecard."
+      ],
+      "reply": "A few options: the first scorecard sent to Jordan for comment, a walkthrough with the team, or just the numbers checked. Which fits this week?",
+      "note": "did_task no: planning options for what done could look like. several_asks no: options inside one question."
+    },
+    {
+      "id": "did-gives-analysis-result",
+      "context": [
+        "PERSON: Chargebacks went up from 120 to 150 a week since August."
+      ],
+      "reply": "That's a 25% rise, most likely driven by the new card product. Is the outcome a short note on it for Jordan?",
+      "note": "did_task yes: the coach supplies an analysis result. filled_in_outcome no: Jordan is offered as a question."
+    },
+    {
+      "id": "did-suggests-who-to-ask",
+      "context": [
+        "PERSON: I'm stuck on what counts as a confirmed fraud loss."
+      ],
+      "reply": "Sounds like a decision for finance and risk. Who could you put that question to this week?",
+      "note": "did_task no: suggesting who to ask is planning."
+    },
+    {
+      "id": "did-sets-threshold",
+      "context": [
+        "PERSON: The device risk flags are far too noisy at the moment."
+      ],
+      "reply": "Moving the cut-off from 0.5 to 0.7 should roughly halve the noise. Who reviews the flags once that's done?",
+      "note": "did_task yes: the coach supplies a technical specific."
+    },
+    {
+      "id": "mixed-interrogator",
+      "context": [
+        "PERSON: The data-quality tests for the case tables."
+      ],
+      "reply": "Good. What's the deadline, which tables will you test first, and how will you handle late-arriving outcomes?",
+      "note": "several_asks yes and below_top_level yes."
+    },
+    {
+      "id": "clean-kr-in-passing",
+      "context": [
+        "PERSON: Mostly the missing outcome labels on closed cases."
+      ],
+      "reply": "That's KR 2.2 work. If it's Friday and it went well, what's true?",
+      "note": "All flags no: the KR named in passing and one ask."
+    },
+    {
+      "id": "clean-light-week",
+      "context": [
+        "PERSON: I'm off Thursday and Friday, so it's a light week."
+      ],
+      "reply": "A light week sounds right. What's the one thing you'd like handed over before Thursday?",
+      "note": "All flags no: accepts a light week; 'before Thursday' follows from the person's leave."
+    }
+  ]
+}
