@@ -51,7 +51,7 @@ export function buildContextMessage(input: ContextInput): Anthropic.MessageParam
   } else if (openItems.length) {
     itemsSection = `Their in-progress tracker items, already listed in the opener:\n${items}`;
   } else {
-    itemsSection = "Their in-progress tracker items: none. The opener asked what is on their plate.";
+    itemsSection = "Their in-progress tracker items: none. The opener asked what will be true on Friday if the week goes well (up to three things).";
   }
 
   const text = [

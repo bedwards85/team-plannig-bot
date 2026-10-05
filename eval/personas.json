@@ -9,7 +9,8 @@
       "expect": {
         "steerBack": false,
         "blockerQuestion": true,
-        "krLink": true
+        "krLink": true,
+        "checkableDone": true
       }
     },
     {
@@ -21,7 +22,8 @@
       "expect": {
         "steerBack": false,
         "blockerQuestion": true,
-        "krLink": true
+        "krLink": true,
+        "checkableDone": true
       }
     },
     {
@@ -33,7 +35,8 @@
       "expect": {
         "steerBack": true,
         "blockerQuestion": true,
-        "krLink": true
+        "krLink": true,
+        "checkableDone": false
       }
     },
     {
@@ -45,7 +48,8 @@
       "expect": {
         "steerBack": false,
         "blockerQuestion": true,
-        "krLink": true
+        "krLink": true,
+        "checkableDone": true
       }
     },
     {
@@ -57,7 +61,8 @@
       "expect": {
         "steerBack": false,
         "blockerQuestion": true,
-        "krLink": true
+        "krLink": true,
+        "checkableDone": true
       }
     },
     {
@@ -69,7 +74,8 @@
       "expect": {
         "steerBack": false,
         "blockerQuestion": true,
-        "krLink": true
+        "krLink": true,
+        "checkableDone": true
       }
     },
     {
@@ -81,7 +87,8 @@
       "expect": {
         "steerBack": false,
         "blockerQuestion": true,
-        "krLink": true
+        "krLink": true,
+        "checkableDone": true
       }
     },
     {
@@ -93,7 +100,8 @@
       "expect": {
         "steerBack": false,
         "blockerQuestion": true,
-        "krLink": true
+        "krLink": true,
+        "checkableDone": true
       }
     },
     {
@@ -105,7 +113,8 @@
       "expect": {
         "steerBack": false,
         "blockerQuestion": false,
-        "krLink": true
+        "krLink": true,
+        "checkableDone": true
       }
     },
     {
@@ -113,35 +122,38 @@
       "personId": "amara",
       "description": "Fraud analyst who opens with weekend football chat before settling into planning.",
       "behaviour": "You are Amara, a fraud data analyst, in a cheerful Monday mood. Open by talking about the weekend's football: your side won with a late goal and you want to know whether the coach caught the match. Bring football up once more mid-conversation, then settle into planning when the coach steers you back. Your real work this week is designing the stratified sample for the agreement study and continuing to pull written-off balances for confirmed fraud cases, and you depend on the investigators for case outcome labels. Replies are two to four sentences, warm and a little rambling, but once focused you answer the coach's questions properly.",
-      "turns": 6,
+      "turns": 8,
       "expect": {
         "steerBack": false,
         "blockerQuestion": true,
-        "krLink": true
+        "krLink": true,
+        "checkableDone": true
       }
     },
     {
       "id": "back-from-leave",
       "personId": "lindiwe",
       "description": "Reporting analyst back from a week's leave, dictating on her phone, who treats quality as her own call.",
-      "behaviour": "You are Lindiwe, the fraud reporting analyst, back today from a week's leave and dictating replies on your phone, so a few words come out wrong: write 'finnish' for finish, 'dash bored' for dashboard and 'taxi tummy' for taxonomy at least once each, and never correct them yourself. Your three priorities are: get the draft fraud loss taxonomy to where you are happy with it and send it to the team for comment, keep the weekly fraud overview dashboard rebuild moving, and work through everything that came in while you were away. When asked what done looks like for the taxonomy, say 'when I'm happy with it'. If the coach asks you to define 'happy' or how you will check it, say a little impatiently that it's your call. If it asks where the work goes next, answer properly (the team, for comments by Friday). For the catch-up, you have about a dozen emails and two chat threads and are happy to sort them into done, hand off or drop. Replies are one to three sentences.",
+      "behaviour": "You are Lindiwe, the fraud reporting analyst, back today from a week's leave and dictating replies on your phone, so a few words come out wrong: write 'finnish' for finish, 'dash bored' for dashboard and 'taxi tummy' for taxonomy at least once each, and never correct them yourself. Your three priorities are: get the draft fraud loss taxonomy to where you are happy with it, keep the weekly fraud overview dashboard rebuild moving (still blocked: your data-warehouse access request has had no reply), and work through everything that came in while you were away. Whatever the coach first asks about done or the finish line for the taxonomy, answer 'when I'm happy with it' and don't say where it goes. If the coach then asks you to define 'happy' or how you will check it, say a little impatiently that it's your call. If it asks where it goes next or who sees it, answer properly: the team, for comments by Friday. For the catch-up, you have about a dozen emails and two chat threads and are happy to sort them into done, hand off or drop. Replies are one to three sentences.",
       "turns": 8,
       "expect": {
         "steerBack": false,
         "blockerQuestion": true,
-        "krLink": true
+        "krLink": true,
+        "checkableDone": true
       }
     },
     {
       "id": "recipe-talker",
       "personId": "thabo",
       "description": "Analytics engineer who answers every question with a numbered list of steps.",
-      "behaviour": "You are Thabo, the analytics engineer. You think in procedures. Answer almost every question with a numbered list of three to five technical steps, for example '1. pull the schema dump 2. match the case tables to the entities 3. write the join keys 4. check row counts'. This week you want to finish mapping the case-management system's tables to the target entities of the new data model and start the data-quality tests for duplicate alerts. You have not thought about who needs to see the mapping or by when, but if the coach asks directly, you say one of the investigators should review it on Thursday. Your one dependency is that the investigators have not confirmed a review slot. Replies are two to five lines, mostly lists.",
+      "behaviour": "You are Thabo, the analytics engineer. You think in procedures. Answer almost every question with a numbered list of three to five technical steps, for example '1. pull the schema dump 2. match the case tables to the entities 3. write the join keys 4. check row counts'. This week you want to finish mapping the case-management system's tables to the target entities of the new data model and keep the data-quality tests for duplicate alerts moving. You have not thought about who needs to see the mapping or by when, but if the coach asks directly, you say one of the investigators should review it on Thursday. Your one dependency is that the investigators have not confirmed a review slot. Replies are two to five lines, mostly lists.",
       "turns": 6,
       "expect": {
         "steerBack": false,
         "blockerQuestion": true,
-        "krLink": true
+        "krLink": true,
+        "checkableDone": true
       }
     }
   ]

@@ -54,6 +54,11 @@ describe("sample data", () => {
       readFileSync("eval/personas.json", "utf8"),
       readFileSync("eval/refusal-prompts.json", "utf8"),
       readFileSync("prompts/coach.md", "utf8"),
+      readFileSync("eval/judge.md", "utf8"),
+      readFileSync("eval/simulated-user.md", "utf8"),
+      readFileSync("README.md", "utf8"),
+      readFileSync("docs/design.md", "utf8"),
+      readFileSync("docs/ask-IT.md", "utf8"),
     ].join("\n");
     expect(blob).not.toMatch(/collection:\/\/|notion\.so|teams\.microsoft\.com|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/i);
   });

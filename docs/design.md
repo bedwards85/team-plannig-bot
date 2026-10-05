@@ -204,7 +204,7 @@ Planning, check-in and review are separate Claude conversations, each started fr
 5. Commands: `/plan`, `/away 2026-10-21..23`, `/skip`, `/mine`, `/help`.
 6. One turn per person at a time; messages arriving meanwhile join the next turn.
 
-**Carry-overs.** Last week's items not Done or Dropped, plus "In progress" tracker Tasks the person owns: at most three, by due date, with [Finish it] [Carry part of it] [Already done] [Drop it]. "Carry part" closes the old item as Partly and links a new one. "Already done" offers a tracker suggestion. A third carry-over prompts a re-scope offer; a new quarter's first Monday offers a KR picker.
+**Carry-overs.** Last week's items not Done or Dropped, plus "In progress" tracker Tasks the person owns: at most three, by due date, with [Finish it] [Carry part of it] [Already done] [Drop it]. "Carry part" closes the old item as Partly and links a new one. "Already done" offers a tracker suggestion. A third carry-over prompts a re-scope offer; a new quarter's first Monday offers a KR picker. From Phase 4, the first opener after `/away` starts "Welcome back"; the coach then asks once what from the time away needs doing, handing off or dropping.
 
 **Coaching.** The team's remit comes from `team.yaml` and is shown with the OKRs; `prompts/coach.md` holds the rules: one question per message, at most 80 words; reflect back and offer options; never do the task or decide for the person. The order is: carry-overs, then "If it's Friday and the week went well, what's true?" (at most three outcomes, reflected back for correction), then per outcome: done as a handover (what goes to whom, by when), one blocker question (access, people, decisions, data, time), KR link, and the first step only. Only in a heavy week does it ask about focus time, what to drop and who else could take something. The coach then recaps one line per outcome ("handover (KR)") and ends "If that's too much, say what to cut. Otherwise type /done." (a Save button in Teams); one extraction builds the Save card (items, changeable KR, handover, blockers, a "share" tick, [Save] [Change something]). No click in two working hours saves a draft. Button choices enter the chat as a line from the person, e.g. `[Chose: Finish "Map case tables"]`.
 
@@ -215,7 +215,7 @@ Planning, check-in and review are separate Claude conversations, each started fr
 - First step only, never the recipe. Whole projects get "what slice could be handed over this week?"; tiny admin becomes one "quick admin" line.
 - Read dictated words charitably and say the reading in passing so the person can correct it. When the person is confused, restate plainly and offer options.
 - Never fill in an outcome; rewording and asking for confirmation is fine.
-- The person's own coaching preferences ("stay top level") should carry over to next week: Phase 2 stores them as `coach_notes`, written by the person at the Friday review or through `/mine`, never inferred by the model.
+- The person's own coaching preferences ("stay top level") should carry over to next week: Phase 2 stores them as `coach_notes`, written by the person at the Friday review or through `/mine`, shown back to them, never inferred by the model.
 
 The trial also scanned the person's mail, chats, calendar and Notion pages before coaching. It made for sharper questions but needed broad access and took several minutes and hundreds of thousands of tokens per source. The bot does not do this (decision 15); see section 16.
 
@@ -224,7 +224,7 @@ The trial also scanned the person's mail, chats, calendar and Notion pages befor
 - Coaching: "Nice, so the mapping is the big one. If it goes well, what could you show Wanjiru on Friday?"
 - KR: "This sounds like KR 2.1, the case data model. Does that fit?"
 - Check-in: "Hi Amara, quick check-in. How's *Audit log access request* going?" [On track] [Slower than hoped] [Stuck] [Done]
-- Review: "Happy Friday, Wanjiru. How did *Labelling guide* land?" [Done] [Partly] [Didn't start] [Dropped]
+- Review: "Happy Friday, Wanjiru. How did *Labelling guide* land?" [Handed over] [Partly] [Didn't start] [Dropped]
 - Nudge: "No rush, Lindiwe. If now isn't great, three quick bullets is plenty." [Plan now] [Light week] [Skip this week]
 
 ## 7. Scheduler, time zones, holidays and sending once
@@ -346,7 +346,7 @@ Work chats are personal information under South Africa's Protection of Personal 
 
 **Retention, for DPO sign-off:** transcripts 90 days; plan items and Notion rows kept as work records; audit events and metrics (no content) 12 months.
 
-**`/mine`** shows what the bot holds about you, with [Send me my transcripts] and [Delete my transcripts]. Plan rows are team records the team lead removes on request.
+**`/mine`** shows what the bot holds about you, including your coaching notes (which you can edit or clear), with [Send me my transcripts] and [Delete my transcripts]. Plan rows are team records the team lead removes on request.
 
 ## 12. Operations
 
@@ -371,7 +371,7 @@ How you'll know it worked: Save twice, then `npm run report -- --as thabo` shows
 How you'll know it worked: `npm run notion:check` prints "OK: N KRs, M Tasks, all fields found" and the Proposed/Rejected rows skipped. After `npm run notion:create-db`, a saved plan appears within 30 s, its KR cell opens the KR row, and hand edits survive the next save. Suggestions go `off`, `dry-run` (change shown and audited, tracker untouched), then `live`; a row hand-edited before Apply gets a fresh offer.
 
 **Phase 4: scheduler, nudges, Teams in the Agents Playground.**
-How you'll know it worked: `npm run simulate-week -- --start 2026-10-19 --away pieter:2026-10-21..23 --silent lindiwe` (fake clock, `ScriptedLLM`, offline) prints a local-time timeline: Kenyan ladders skip Mashujaa Day; Lindiwe gets two nudges, the heads-up, then Jordan's note Thursday 10:00; the summary is edited for a late plan. With `--away jordan:2026-10-22..23` the note is held, then dropped. Rerunning or killing midway sends nothing twice. In the Agents Playground (`PLAYGROUND=1`) cards and buttons work; without it or `CLIENT_ID`/`TENANT_ID` the bot won't start; an unlisted user gets the team-only reply. After Save, [Copy my update] gives the fixed-format "What I'm working on / What I need help with" text. The first opener after `/away` says welcome back and asks what from the time away needs doing, handing off or dropping.
+How you'll know it worked: `npm run simulate-week -- --start 2026-10-19 --away pieter:2026-10-21..23 --silent lindiwe` (fake clock, `ScriptedLLM`, offline) prints a local-time timeline: Kenyan ladders skip Mashujaa Day; Lindiwe gets two nudges, the heads-up, then Jordan's note Thursday 10:00; the summary is edited for a late plan. With `--away jordan:2026-10-22..23` the note is held, then dropped. Rerunning or killing midway sends nothing twice. In the Agents Playground (`PLAYGROUND=1`) cards and buttons work; without it or `CLIENT_ID`/`TENANT_ID` the bot won't start; an unlisted user gets the team-only reply. After Save, [Copy my update] gives the fixed-format "What I'm working on / What I need help with" text. The first opener after `/away` starts "Welcome back" (still one question), and the coach then asks once what from the time away needs doing, handing off or dropping.
 
 **Phase 5: hosted pilot.** Gate: IT approval (`docs/ask-IT.md`) and the staff notice.
 How you'll know it worked: the Monday DM arrives unprompted at 08:30; status within 0.5 s; first text p50 ≤2.0 s, p95 ≤3.5 s over week one; an all-day OOF event stops that day's nudge; the ops DM arrives with the secret-expiry countdown; `/healthz` is green; a backup restores; the purge removes a 90-day-old test transcript.

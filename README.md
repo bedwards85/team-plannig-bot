@@ -4,7 +4,7 @@ A planning coach for a small team. Each week it:
 
 - **On Monday**, messages each person, offers the items still open from last week ("do you plan to finish this off?"), and coaches them one short question at a time towards at most three outcomes for the week. For each one it asks what gets handed to whom by Friday, what could block it (access, people to talk to, decisions), which OKR key result (KR) it supports, and the first step. It stays at the level of what, not how, and never does the task itself.
 - **Mid-week**, checks in: "how's it going, anything new in the way?"
-- **On Friday**, reviews: "how did it go, what helped, what carries over?"
+- **On Friday**, reviews: "how did it go, what helped, what carries over?", and asks whether to do anything differently next week.
 - **Logs the plan** to Notion against the team's OKRs. It writes to its own database and only *suggests* changes to the OKR tracker, which the person confirms.
 - **Posts a team summary**, nudges people who go quiet, and warns them before anything is escalated to their manager.
 
@@ -22,7 +22,7 @@ cp .env.example .env              # then open .env and paste your key after ANTH
 npm run chat -- --as amara        # chat as one of the sample team members
 ```
 
-Describe a task you have this week. You should get one short question at a time, ending with something like "Sounds like KR 1.2. Right?". After each reply a grey line shows how long the first words took and whether the prompt cache was used. Type `/done` (or press Ctrl+C) to finish.
+Answer the opener about your open items, then say what you want to be true by Friday. You should get one short question at a time: who gets each piece of work and when, what could block it, which KR it supports ("Sounds like KR 1.2. Right?") and your first step. It ends with a one-line-per-outcome recap. After each reply a grey line shows how long the first words took and whether the prompt cache was used. Type `/done` (or press Ctrl+C) to finish.
 
 Other options:
 

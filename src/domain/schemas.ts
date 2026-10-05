@@ -63,6 +63,8 @@ export const PersonaSchema = z.object({
     blockerQuestion: z.boolean().default(true),
     // The coach should propose or ask which KR the work supports.
     krLink: z.boolean().default(true),
+    // The coach should frame done as a handover others could see, for at least one item.
+    checkableDone: z.boolean().default(true),
   }),
 });
 export type Persona = z.infer<typeof PersonaSchema>;

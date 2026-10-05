@@ -132,7 +132,7 @@ async function runPersona(p: Persona): Promise<PersonaResult> {
     clock: simulatedClock(),
   });
   const items = conversation.openItems.length
-    ? conversation.openItems.map((t) => `- ${t.name} (KR ${t.krCode}, ${t.status}${t.due ? `, due ${t.due}` : ""})`).join("\n")
+    ? conversation.openItems.map((t) => `- ${t.name} (KR ${t.krCode}, ${t.status}${t.blocked ? ", blocked" : ""}${t.due ? `, due ${t.due}` : ""})`).join("\n")
     : "- none in progress";
   const simSystem = fill(simulatorTemplate, {
     name: person.name,
@@ -201,7 +201,7 @@ async function runPersona(p: Persona): Promise<PersonaResult> {
       if (p.expect.blockerQuestion && !verdict.blocker_question) failures.push("judge: never asked about blockers");
       if (p.expect.krLink && !verdict.kr_link) failures.push("judge: no fitting KR linked");
       if (!verdict.stays_top_level) failures.push("judge: went below the top level (method, step lists or over-drilling)");
-      if (!verdict.checkable_done) failures.push("judge: never framed done as a handover others could see");
+      if (p.expect.checkableDone && !verdict.checkable_done) failures.push("judge: never framed done as a handover others could see");
       if (!verdict.steered_back_every_time) failures.push("judge: did not steer back to planning");
       if (p.expect.steerBack && !verdict.asked_coach_to_do_task) {
         inconclusive = true;
