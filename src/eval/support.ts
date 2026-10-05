@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { normalize } from "node:path";
+import { resolve } from "node:path";
 import { z } from "zod";
 import type { ReplyExchange } from "../ports/classifier.js";
 import type { TurnUsage } from "../ports/llm.js";
@@ -199,7 +199,7 @@ export const SAMPLE_TRACKER = "fixtures/q4-tracker.sample.json";
  * transcripts to a US-hosted service, so they refuse anything else unless told otherwise.
  */
 export function isSampleData(teamConfigPath: string, trackerPath: string): boolean {
-  const same = (a: string, b: string) => normalize(a).replace(/^\.\//, "") === b;
+  const same = (a: string, b: string) => resolve(a) === resolve(b);
   return same(teamConfigPath, SAMPLE_TEAM_CONFIG) && same(trackerPath, SAMPLE_TRACKER);
 }
 

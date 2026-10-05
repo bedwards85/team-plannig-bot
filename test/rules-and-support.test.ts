@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { WRAP_UP_LINE, checkReply, isWrapUp, recapOutcomeCount } from "../src/core/replyRules.js";
 import { localStamp, weekStart } from "../src/core/time.js";
-import { fill, mapLimit, percentile, unknownKrCodes } from "../src/eval/support.js";
+import { resolve } from "node:path";
+import { exchangeAt, fill, isSampleData, mapLimit, percentile, unknownKrCodes } from "../src/eval/support.js";
 
 describe("checkReply", () => {
   it("accepts a short single question", () => {
@@ -86,5 +87,34 @@ describe("eval support", () => {
       return i;
     });
     expect(out).toEqual([0, 1, 2]);
+  });
+});
+
+describe("isSampleData", () => {
+  it("accepts the sample files however the path is written", () => {
+    expect(isSampleData("config/team.sample.yaml", "fixtures/q4-tracker.sample.json")).toBe(true);
+    expect(isSampleData("./config/team.sample.yaml", resolve("fixtures/q4-tracker.sample.json"))).toBe(true);
+  });
+  it("refuses any other team or tracker", () => {
+    expect(isSampleData("config/team.local.yaml", "fixtures/q4-tracker.sample.json")).toBe(false);
+    expect(isSampleData("config/team.sample.yaml", "fixtures/tracker.local.json")).toBe(false);
+  });
+});
+
+describe("exchangeAt", () => {
+  const lines = [
+    { speaker: "coach" as const, text: "Hi, new week." },
+    { speaker: "person" as const, text: "Finishing the mapping." },
+    { speaker: "coach" as const, text: "Who gets it on Friday?" },
+  ];
+  it("gives the reply and the turns before it, without names", () => {
+    expect(exchangeAt(lines, 2)).toEqual({
+      context: ["COACH: Hi, new week.", "PERSON: Finishing the mapping."],
+      reply: "Who gets it on Friday?",
+    });
+  });
+  it("refuses a line that isn't a coach reply", () => {
+    expect(() => exchangeAt(lines, 1)).toThrow(/not a coach reply/);
+    expect(() => exchangeAt(lines, 9)).toThrow(/not a coach reply/);
   });
 });
