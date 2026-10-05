@@ -1,6 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { normalize } from "node:path";
 import { z } from "zod";
+import type { ReplyExchange } from "../ports/classifier.js";
 import type { TurnUsage } from "../ports/llm.js";
 
 /** Fill {{placeholders}} in a prompt template. Unknown placeholders are an error. */
@@ -184,4 +186,32 @@ export function unknownKrCodes(text: string, validCodes: Set<string>): string[] 
  */
 export function questionBudget(outcomes: number, carryOvers: number): number {
   return 2 * Math.max(outcomes, 1) + 2 + Math.max(carryOvers - 1, 0);
+}
+
+// ---- Shared by the eval and the Jev scripts ----
+
+/** The fictional team and tracker that ship with the repo. */
+export const SAMPLE_TEAM_CONFIG = "config/team.sample.yaml";
+export const SAMPLE_TRACKER = "fixtures/q4-tracker.sample.json";
+
+/**
+ * True when a run used the fictional sample team and tracker. The Jev scripts send
+ * transcripts to a US-hosted service, so they refuse anything else unless told otherwise.
+ */
+export function isSampleData(teamConfigPath: string, trackerPath: string): boolean {
+  const same = (a: string, b: string) => normalize(a).replace(/^\.\//, "") === b;
+  return same(teamConfigPath, SAMPLE_TEAM_CONFIG) && same(trackerPath, SAMPLE_TRACKER);
+}
+
+/**
+ * The coach reply at `index` and the turns before it, as the reply checks read them.
+ * Speakers are "COACH" and "PERSON" so no names leave the machine.
+ */
+export function exchangeAt(lines: ChatLine[], index: number): ReplyExchange {
+  const line = lines[index];
+  if (!line || line.speaker !== "coach") throw new Error(`Line ${index} is not a coach reply`);
+  return {
+    context: lines.slice(0, index).map((l) => `${l.speaker === "coach" ? "COACH" : "PERSON"}: ${l.text}`),
+    reply: line.text,
+  };
 }

@@ -78,14 +78,16 @@ export class JevClassifier implements ClassifierPort {
   readonly notes = new Set<string>();
   private readonly client: TypeSafeClient;
   private readonly questions: Record<ReplyFlag, NoulQuestion>;
-  private readonly calibration: JevCalibration | null;
+  /** Dropped (set to null) once Jev answers with a different model, so threshold and probabilities stay on one scale. */
+  private calibration: JevCalibration | null;
   private readonly contextTurns: number;
   private readonly timeoutMs: number;
 
   constructor(private readonly options: JevClassifierOptions) {
     this.client = new TypeSafeClient({
       apiKey: options.apiKey,
-      defaultModel: options.model ?? process.env.JEV_MODEL ?? "jev-latest",
+      // A blank JEV_MODEL= line in .env means "not set", as the SDK treats its own variables.
+      defaultModel: options.model ?? (process.env.JEV_MODEL?.trim() || "jev-latest"),
       timeout: options.timeoutMs ?? 10_000,
       retry: { maxRetries: options.maxRetries ?? 2 },
       logLevel: "off",
@@ -121,7 +123,11 @@ export class JevClassifier implements ClassifierPort {
     try {
       const result = await this.client.systemOne(
         {
-          state: { conversation_so_far: exchange.context.slice(-this.contextTurns), reply_to_check: exchange.reply },
+          // slice(-0) would return everything, so zero turns needs its own case.
+          state: {
+            conversation_so_far: this.contextTurns > 0 ? exchange.context.slice(-this.contextTurns) : [],
+            reply_to_check: exchange.reply,
+          },
           questions: this.questions,
         },
         { signal, timeout: this.timeoutMs },
@@ -131,6 +137,8 @@ export class JevClassifier implements ClassifierPort {
         this.notes.add(
           `Calibration is for model ${this.calibration.model}, but ${result.model} answered: using raw probabilities and threshold ${DEFAULT_THRESHOLD}.`,
         );
+        // Its thresholds were chosen on recalibrated probabilities, so they no longer apply either.
+        this.calibration = null;
       }
       const probabilities = {} as FlagProbabilities;
       for (const flag of REPLY_FLAGS) {
@@ -139,7 +147,7 @@ export class JevClassifier implements ClassifierPort {
         const blocks: IsotonicBlock[] | undefined = useCalibration ? this.calibration!.flags[flag]?.isotonic : undefined;
         probabilities[flag] = blocks?.length ? applyIsotonic(blocks, raw) : raw;
       }
-      return { probabilities, model: result.model, ms: performance.now() - started };
+      return { probabilities, model: result.model, ms: performance.now() - started, inputTokens: result.usage?.input_tokens ?? 0 };
     } catch {
       // Unknown, not a verdict: callers fall back to the slower judge or skip the check.
       return null;

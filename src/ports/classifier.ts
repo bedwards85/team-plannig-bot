@@ -30,6 +30,8 @@ export interface FlagResult {
   /** Model that answered, for checking against the calibration file. */
   model: string;
   ms: number;
+  /** Tokens sent, for the cost line. Jev charges for input only. */
+  inputTokens: number;
 }
 
 export interface ClassifierPort {
