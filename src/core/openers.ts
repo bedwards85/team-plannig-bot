@@ -3,6 +3,9 @@ import { shortDate } from "./time.js";
 
 export type Touchpoint = "plan" | "checkin" | "review";
 
+/** Tells people they can plan in a few lines instead of a long chat. */
+const QUICK_PATH = "Three quick bullets are plenty, or we can talk it through.";
+
 /**
  * Fixed opening messages. They are templates, not model output, so they appear
  * instantly and can never misstate what is open.
@@ -13,18 +16,18 @@ export function opener(touchpoint: Touchpoint, person: Person, openItems: OkrRow
   switch (touchpoint) {
     case "plan":
       if (openItems.length === 0) {
-        return `Hi ${person.name}, new week. Let's sketch it out together. If it's Friday and the week went well, what's true? Up to three things.`;
+        return `Hi ${person.name}, new week. ${QUICK_PATH} If it's Friday and the week went well, what's true?`;
       }
       if (openItems.length === 1) {
         return [
-          `Hi ${person.name}, new week. Let's sketch it out together.`,
+          `Hi ${person.name}, new week. ${QUICK_PATH}`,
           `This is still in progress on the tracker:`,
           line(openItems[0]!),
           `Do you plan to finish this off this week?`,
         ].join("\n");
       }
       return [
-        `Hi ${person.name}, new week. Let's sketch it out together.`,
+        `Hi ${person.name}, new week. ${QUICK_PATH}`,
         `These are still in progress on the tracker:`,
         ...openItems.map(line),
         `Which of these do you plan to finish off this week?`,

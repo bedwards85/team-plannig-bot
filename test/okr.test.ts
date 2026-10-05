@@ -46,6 +46,12 @@ describe("openItemsFor", () => {
   it("returns nothing for someone with no tasks", () => {
     expect(openItemsFor("lead", tracker)).toEqual([]);
   });
+
+  it("offers a shared task to its primary owner only", () => {
+    const shared = { ...tracker, rows: [{ ...tracker.rows[5]!, id: "t-200", owners: ["bob", "ann"] }] };
+    expect(openItemsFor("bob", shared).map((r) => r.id)).toEqual(["t-200"]);
+    expect(openItemsFor("ann", shared)).toEqual([]);
+  });
 });
 
 describe("findPerson", () => {

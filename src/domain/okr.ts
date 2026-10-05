@@ -64,7 +64,8 @@ export function renderOkrSnapshot(tracker: TrackerFixture, team: TeamConfig): st
  */
 export function openItemsFor(personId: string, tracker: TrackerFixture, limit = 3): OkrRow[] {
   return activeRows(tracker.rows)
-    .filter((r) => r.type === "Task" && r.status === "In progress" && r.owners.includes(personId))
+    // Only the primary owner (listed first) is offered a task, so it is never planned twice.
+    .filter((r) => r.type === "Task" && r.status === "In progress" && r.owners[0] === personId)
     .sort((a, b) => {
       const ad = a.due ?? "9999-12-31";
       const bd = b.due ?? "9999-12-31";

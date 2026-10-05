@@ -22,7 +22,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { ClaudeLLM } from "../src/adapters/anthropic/ClaudeLLM.js";
 import { hasAnthropicCredentials, loadDotEnv, loadSettings, loadTeam, loadText, loadTracker } from "../src/config.js";
 import { CoachConversation, type TurnOutcome } from "../src/core/conversation.js";
-import { checkReply, type ReplyCheck } from "../src/core/replyRules.js";
+import { checkReply, isWrapUp, recapOutcomeCount, type ReplyCheck } from "../src/core/replyRules.js";
 import type { Clock } from "../src/core/time.js";
 import { activeRows, findPerson } from "../src/domain/okr.js";
 import { PersonasFileSchema, RefusalFileSchema, type Persona, type RefusalPrompt } from "../src/domain/schemas.js";
@@ -36,6 +36,7 @@ import {
   judge,
   mapLimit,
   percentile,
+  questionBudget,
   simulateReply,
   transcriptText,
   unknownKrCodes,
@@ -117,6 +118,10 @@ interface PersonaResult {
   failures: string[];
   verdict: Verdict | null;
   replyChecks: ReplyCheck[];
+  /** Coach replies up to and including the wrap-up, or null if it never wrapped up. */
+  repliesToWrapUp: number | null;
+  outcomes: number;
+  budget: number | null;
   transcript: ChatLine[];
 }
 
@@ -147,9 +152,12 @@ async function runPersona(p: Persona): Promise<PersonaResult> {
   let inconclusive = false;
   let verdict: Verdict | null = null;
   let previousCachedPrefix = 0;
+  let repliesToWrapUp: number | null = null;
+  let outcomes = 0;
+  let budget: number | null = null;
 
   try {
-    for (let turn = 0; turn < p.turns; turn++) {
+    for (let turn = 0; turn < p.maxTurns; turn++) {
       const sim = await simulateReply(client, simSystem, lines);
       costs.simulator += estimateCost(SIMULATOR_MODEL, sim.usage);
       lines.push({ speaker: "person", text: sim.text });
@@ -178,6 +186,24 @@ async function runPersona(p: Persona): Promise<PersonaResult> {
       if (!check.ok) failures.push(`turn ${turn + 1}: ${check.problems.join(", ")}`);
       const badCodes = unknownKrCodes(outcome.text, validKrCodes);
       if (badCodes.length) failures.push(`turn ${turn + 1}: invented KR code(s) ${badCodes.join(", ")}`);
+      // The person would now type /done, so the chat ends here.
+      if (isWrapUp(outcome.text)) {
+        repliesToWrapUp = turn + 1;
+        outcomes = recapOutcomeCount(outcome.text);
+        break;
+      }
+    }
+
+    if (repliesToWrapUp === null) {
+      if (p.expect.wrapUp) failures.push(`never reached the wrap-up in ${p.maxTurns} replies`);
+    } else {
+      budget = questionBudget(outcomes, conversation.openItems.length);
+      if (p.expect.budget && repliesToWrapUp > budget) {
+        failures.push(`took ${repliesToWrapUp} replies to wrap up ${outcomes} outcome(s) (budget ${budget})`);
+      }
+      if (p.expect.maxRepliesToWrapUp !== undefined && repliesToWrapUp > p.expect.maxRepliesToWrapUp) {
+        failures.push(`took ${repliesToWrapUp} replies to wrap up (limit ${p.expect.maxRepliesToWrapUp})`);
+      }
     }
 
     const graded = await judge(
@@ -213,7 +239,18 @@ async function runPersona(p: Persona): Promise<PersonaResult> {
     failures.push(`${inconclusive ? "inconclusive" : "crashed"}: ${(error as Error).message}`);
   }
 
-  return { id: p.id, pass: failures.length === 0, inconclusive, failures, verdict, replyChecks, transcript: lines };
+  return {
+    id: p.id,
+    pass: failures.length === 0,
+    inconclusive,
+    failures,
+    verdict,
+    replyChecks,
+    repliesToWrapUp,
+    outcomes,
+    budget,
+    transcript: lines,
+  };
 }
 
 // ---------- Refusal set ----------
@@ -270,7 +307,8 @@ if (runPersonas) {
     ...(await mapLimit(personas, concurrency, async (p) => {
       const r = await runPersona(p);
       const mark = r.pass ? "✓" : r.inconclusive ? "?" : "✗";
-      console.log(`  ${mark} ${r.id}${r.pass ? "" : `: ${r.failures.join("; ")}`}`);
+      const pace = r.repliesToWrapUp === null ? "no wrap-up" : `wrap-up after ${r.repliesToWrapUp} (budget ${r.budget})`;
+      console.log(`  ${mark} ${r.id} · ${pace}${r.pass ? "" : `: ${r.failures.join("; ")}`}`);
       return r;
     })),
   );
@@ -300,6 +338,9 @@ const failedTurns = latency.filter((s) => s.failed).length;
 const personaOk = !runPersonas || (personaResults.length > 0 && personasPassed >= personaTarget);
 const refusalOk = !runRefusals || (refusals === 0 && refusalErrors === 0);
 const latencyOk = latency.length >= 30 && median !== null && median <= 2000;
+const wrapped = personaResults.filter((r) => r.repliesToWrapUp !== null);
+const withinBudget = wrapped.filter((r) => r.budget !== null && r.repliesToWrapUp! <= r.budget).length;
+const medianToWrapUp = percentile(wrapped.map((r) => r.repliesToWrapUp!), 50);
 
 const fmt = (ms: number | null) => (ms === null ? "n/a" : `${(ms / 1000).toFixed(2)} s`);
 const split = (first: boolean) => fmt(percentile(latency.filter((s) => s.firstReply === first).map((s) => s.ms), 50));
@@ -307,6 +348,10 @@ console.log("\n──────── Results ────────");
 if (runPersonas) {
   const inc = inconclusiveCount ? ` · ${inconclusiveCount} inconclusive (helper model trouble; rerun with --persona)` : "";
   console.log(`${personaOk ? "PASS" : "FAIL"}  Personas: ${personasPassed}/${personaResults.length} passed (need ${personaTarget})${inc}`);
+  console.log(
+    `      wrap-up reached in ${wrapped.length}/${personaResults.length} chats · median ${medianToWrapUp ?? "n/a"} coach replies to wrap up` +
+      ` · within budget in ${withinBudget}/${wrapped.length} (2 per outcome + 2)`,
+  );
 }
 if (runRefusals) {
   console.log(`${refusalOk ? "PASS" : "FAIL"}  Refusals: ${refusals}/${refusalResults.length} refused${refusalErrors ? `, ${refusalErrors} errors` : ""} (need 0)`);
@@ -341,6 +386,7 @@ writeFileSync(
         personaCount: personaResults.length,
         inconclusive: inconclusiveCount,
         refusals,
+        wrapUp: { reached: wrapped.length, withinBudget, medianReplies: medianToWrapUp },
         firstTextMs: { median, p95, n: latency.length, failedTurns },
         cacheReuse,
         costs,

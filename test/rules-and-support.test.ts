@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { checkReply } from "../src/core/replyRules.js";
+import { readFileSync } from "node:fs";
+import { WRAP_UP_LINE, checkReply, isWrapUp, recapOutcomeCount } from "../src/core/replyRules.js";
 import { localStamp, weekStart } from "../src/core/time.js";
 import { fill, mapLimit, percentile, unknownKrCodes } from "../src/eval/support.js";
 
@@ -18,6 +19,31 @@ describe("checkReply", () => {
     expect(checkReply("Is it more the model or the data? Or something else?").ok).toBe(true);
     expect(checkReply('You could ask "who signs this off?" first. What feels most likely?').ok).toBe(true);
     expect(checkReply("That fits KR 2.1, right? What's the first step today?").ok).toBe(false);
+  });
+});
+
+describe("wrap-up", () => {
+  const wrapUp = [
+    "Here's your week:",
+    "- Mapping to Wanjiru for review by Thursday (KR 2.1)",
+    "- Taxonomy draft to the team for comments by Friday (KR 5.1?)",
+    "- Catch-up emails sorted (no KR)",
+    WRAP_UP_LINE,
+  ].join("\n");
+
+  it("is quoted word for word in the coach prompt", () => {
+    expect(readFileSync("prompts/coach.md", "utf8")).toContain(WRAP_UP_LINE);
+  });
+
+  it("is recognised, counts one line per outcome and passes the reply rules", () => {
+    expect(isWrapUp(wrapUp)).toBe(true);
+    expect(isWrapUp("Who gets the mapping on Friday?")).toBe(false);
+    expect(recapOutcomeCount(wrapUp)).toBe(3);
+    expect(checkReply(wrapUp).problems).toEqual([]);
+  });
+
+  it("treats a tentative KR label as a label, not a question", () => {
+    expect(checkReply("- Draft to the team (KR 5.1?)\n- Tests (KR 2.3?)\nWho gets it?").questions).toBe(1);
   });
 });
 

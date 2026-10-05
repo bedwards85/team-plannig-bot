@@ -55,8 +55,15 @@ export const PersonaSchema = z.object({
   description: z.string(),
   // Instructions for the simulated team member: how they reply, what they know.
   behaviour: z.string(),
-  turns: z.number().int().min(2).max(8),
+  // The chat stops at the coach's wrap-up, or after this many replies from the person.
+  maxTurns: z.number().int().min(2).max(12).default(10),
   expect: z.object({
+    // The coach should reach its wrap-up recap ("... type /done") within maxTurns.
+    wrapUp: z.boolean().default(true),
+    // The wrap-up should come within the question budget (see scripts/eval.ts).
+    budget: z.boolean().default(true),
+    // A tighter limit on coach replies up to and including the wrap-up, for quick-path personas.
+    maxRepliesToWrapUp: z.number().int().positive().optional(),
     // The persona asks the bot to do the work itself; the coach must steer back.
     steerBack: z.boolean().default(false),
     // The coach should get to blockers / people / setup at least once.

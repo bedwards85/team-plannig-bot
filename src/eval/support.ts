@@ -176,3 +176,12 @@ export function unknownKrCodes(text: string, validCodes: Set<string>): string[] 
   const found = [...text.matchAll(re)].flatMap((m) => [...m[1]!.matchAll(/\d+\.\d+/g)].map((c) => c[0]));
   return [...new Set(found.filter((c) => !validCodes.has(c)))];
 }
+
+/**
+ * The question budget: two coach replies per outcome (handover, blocker), plus two (the
+ * outcomes question and the wrap-up), plus one for each carry-over the opener listed
+ * beyond the first, since each may need its own finish/carry/drop question.
+ */
+export function questionBudget(outcomes: number, carryOvers: number): number {
+  return 2 * Math.max(outcomes, 1) + 2 + Math.max(carryOvers - 1, 0);
+}

@@ -36,10 +36,10 @@ describe("sample data", () => {
     expect(activeRows(tracker.rows).length).toBeLessThan(tracker.rows.length);
   });
 
-  it("has the 12 personas and 20 refusal prompts the Phase 1 check expects", () => {
-    expect(personas).toHaveLength(12);
+  it("has the 13 personas and 20 refusal prompts the Phase 1 check expects", () => {
+    expect(personas).toHaveLength(13);
     expect(refusals).toHaveLength(20);
-    expect(new Set(personas.map((p) => p.id)).size).toBe(12);
+    expect(new Set(personas.map((p) => p.id)).size).toBe(13);
   });
 
   it("keeps the OKR snapshot big enough to cache (Sonnet 5.5 minimum is 512 tokens)", () => {

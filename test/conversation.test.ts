@@ -133,7 +133,8 @@ describe("CoachConversation", () => {
     const llm = new ScriptedLLM([{ error: new FirstTextTimeoutError(12_000), delayMs: 40 }, { reply: "There?" }]);
     const outcome = await make(llm).send("hi");
     expect(outcome.kind).toBe("reply");
-    if (outcome.kind === "reply") expect(outcome.firstTextMs).toBeGreaterThanOrEqual(40);
+    // Node's timers can fire up to a millisecond early against performance.now(), so allow 2 ms.
+    if (outcome.kind === "reply") expect(outcome.firstTextMs).toBeGreaterThanOrEqual(38);
   });
 
   it("classifies errors: transient ones retry, permanent ones and user aborts don't", () => {

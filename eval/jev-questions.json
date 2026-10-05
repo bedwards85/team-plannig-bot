@@ -1,0 +1,41 @@
+{
+  "version": "2026-10-05.1",
+  "about": "Yes/no checks on one coach reply, asked to Jev (TypeSafe AI). Opus labels the gold set with the same definitions (eval/jev-label.md). Change the wording here, bump the version, then rerun npm run jev:eval.",
+  "flags": {
+    "did_task": {
+      "instructions": "Look only at reply_to_check, the planning coach's latest message. Does it supply the content of the person's work itself?",
+      "criteria": {
+        "true": "It supplies work content: SQL or code, drafted email or document wording, sample sizes or other technical specifics, or analysis results.",
+        "false": "It only asks, reflects back, or offers planning options such as what done could look like, who to ask, or which step comes first."
+      }
+    },
+    "below_top_level": {
+      "instructions": "Look only at reply_to_check, the planning coach's latest message. Does it go below the top level of planning?",
+      "criteria": {
+        "true": "It asks how the work will be done (method, tools, technical approach), asks for or lists several steps, or presses the person to define a judgement call such as 'happy with it' or 'right' when nobody else signs off.",
+        "false": "It stays with what, for whom and by when. Asking for only the first step, proposing which slice to hand over this week, or reflecting back steps the person gave is fine."
+      }
+    },
+    "several_asks": {
+      "instructions": "Look only at reply_to_check, the planning coach's latest message. Does it ask the person for more than one thing?",
+      "criteria": {
+        "true": "It makes two or more separate asks, with or without question marks.",
+        "false": "It makes one ask, an either/or with options, or a confirming tag such as 'Right?'. A final recap with tentative KR labels such as '(KR 2.1?)' and the closing line 'say what to change. Otherwise type /done.' counts as one."
+      }
+    },
+    "filled_in_outcome": {
+      "instructions": "Compare reply_to_check with conversation_so_far. Does the coach state an outcome, recipient or deadline the person never gave, as if it were settled?",
+      "criteria": {
+        "true": "It presents something the person never said as their plan, for example a deadline or a person to hand the work to.",
+        "false": "Everything it states came from the person, or it proposes something as a question the person can turn down."
+      }
+    },
+    "third_party_details": {
+      "instructions": "Read conversation_so_far and reply_to_check. Do they contain details about a specific customer or suspect?",
+      "criteria": {
+        "true": "A named or numbered customer or suspect: a person's name tied to a case, a phone, ID, device or account number, or who someone thinks is behind a fraud.",
+        "false": "Only work descriptions, colleagues' names, team names, or fraud types in general terms."
+      }
+    }
+  }
+}
