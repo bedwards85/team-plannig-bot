@@ -11,10 +11,12 @@ Each item says what to create or approve, why, and the least privilege needed. A
   - Least privilege: no delegated permissions or redirect URIs (nobody signs in); a certificate, or a secret of 12 months or less, kept only in Key Vault.
 - [ ] **Graph application permissions, with admin consent:**
   - `TeamsAppInstallation.ReadWriteSelfForUser.All`: installs this app (only this app) for each team member, so the bot can message them first.
-  - `Calendars.ReadBasic.All`: reads out-of-office blocks for the week (`getSchedule`); no bodies or attachments.
+  - Calendar free/busy for the week (`getSchedule`), used for out-of-office days and, from Phase 5, the person's free time. Pick one of two options with the data-protection officer:
+    - **Tenant-wide `Calendars.ReadBasic.All`** (Entra admin consent): sees no event bodies or attachments, but covers every mailbox in the tenant.
+    - **Scoped to the team:** Exchange "RBAC for Applications" role `Application Calendars.Read`, limited by a management scope or administrative unit to team members. Exchange has no ReadBasic role, so this permission could read event bodies (the bot doesn't). RBAC grants add to Entra grants, so for the scoping to mean anything there must be **no** tenant-wide Entra `Calendars.Read` or `Calendars.ReadBasic.All` consent for this app. Application access policies are legacy; don't create new ones.
   - `Presence.Read.All`: checks "out of office now" just before each message.
-  - Optional `MailboxSettings.Read`: scheduled auto-reply dates; only if calendars prove unreliable.
-  - Recommended: limit mailbox access to team members with Exchange "RBAC for Applications" (check it covers calendars).
+  - Optional `MailboxSettings.Read`: scheduled auto-reply dates, only if calendars prove unreliable. It can be scoped in the same way (`Application MailboxSettings.Read`).
+- [ ] **Not requested, by design:** `Mail.Read`, `Chat.Read.All`, `ChatMessage.Send`, `ChannelMessage.Send`, `People.Read`, `Team.ReadBasic.All`. The bot never reads anyone's mail, chats or files, and never posts as a person.
 
 ## 2. Azure subscription owner
 
