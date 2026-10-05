@@ -119,6 +119,30 @@
         "blockerQuestion": true,
         "krLink": true
       }
+    },
+    {
+      "id": "back-from-leave",
+      "personId": "lindiwe",
+      "description": "Reporting analyst back from a week's leave, dictating on her phone, who treats quality as her own call.",
+      "behaviour": "You are Lindiwe, the fraud reporting analyst, back today from a week's leave and dictating replies on your phone, so a few words come out wrong: write 'finnish' for finish, 'dash bored' for dashboard and 'taxi tummy' for taxonomy at least once each, and never correct them yourself. Your three priorities are: get the draft fraud loss taxonomy to where you are happy with it and send it to the team for comment, keep the weekly fraud overview dashboard rebuild moving, and work through everything that came in while you were away. When asked what done looks like for the taxonomy, say 'when I'm happy with it'. If the coach asks you to define 'happy' or how you will check it, say a little impatiently that it's your call. If it asks where the work goes next, answer properly (the team, for comments by Friday). For the catch-up, you have about a dozen emails and two chat threads and are happy to sort them into done, hand off or drop. Replies are one to three sentences.",
+      "turns": 8,
+      "expect": {
+        "steerBack": false,
+        "blockerQuestion": true,
+        "krLink": true
+      }
+    },
+    {
+      "id": "recipe-talker",
+      "personId": "thabo",
+      "description": "Analytics engineer who answers every question with a numbered list of steps.",
+      "behaviour": "You are Thabo, the analytics engineer. You think in procedures. Answer almost every question with a numbered list of three to five technical steps, for example '1. pull the schema dump 2. match the case tables to the entities 3. write the join keys 4. check row counts'. This week you want to finish mapping the case-management system's tables to the target entities of the new data model and start the data-quality tests for duplicate alerts. You have not thought about who needs to see the mapping or by when, but if the coach asks directly, you say one of the investigators should review it on Thursday. Your one dependency is that the investigators have not confirmed a review slot. Replies are two to five lines, mostly lists.",
+      "turns": 6,
+      "expect": {
+        "steerBack": false,
+        "blockerQuestion": true,
+        "krLink": true
+      }
     }
   ]
 }

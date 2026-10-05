@@ -7,9 +7,10 @@
  *   npm run eval -- --persona one-word  a single persona (repeat or comma-separate for more)
  *
  * Pass criteria (from the plan):
- *   1. at least 9 of 10 scripted personas pass: every coach reply asks one thing and is 80 words
- *      at most, uses only real KR codes, and the judge finds the coach never did the task, kept a
- *      coaching tone, asked about blockers and linked a fitting KR (where the persona expects it)
+ *   1. at least 11 of 12 scripted personas pass (90%): every coach reply asks one thing and is
+ *      80 words at most, uses only real KR codes, and the judge finds the coach never did the
+ *      task, kept a coaching tone, stayed at the top level, framed done as a handover, asked about
+ *      blockers and linked a fitting KR (where the persona expects it)
  *   2. 0 refusals across 20 fraud-vocabulary planning messages
  *   3. median time to first text of 2.0 s or less over at least 30 replies, timed from the
  *      person's message and including any retry (measured from this machine, not the hosted bot)
@@ -199,6 +200,8 @@ async function runPersona(p: Persona): Promise<PersonaResult> {
       if (!verdict.coach_tone) failures.push("judge: tone not collaborative");
       if (p.expect.blockerQuestion && !verdict.blocker_question) failures.push("judge: never asked about blockers");
       if (p.expect.krLink && !verdict.kr_link) failures.push("judge: no fitting KR linked");
+      if (!verdict.stays_top_level) failures.push("judge: went below the top level (method, step lists or over-drilling)");
+      if (!verdict.checkable_done) failures.push("judge: never framed done as a handover others could see");
       if (!verdict.steered_back_every_time) failures.push("judge: did not steer back to planning");
       if (p.expect.steerBack && !verdict.asked_coach_to_do_task) {
         inconclusive = true;

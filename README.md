@@ -2,7 +2,7 @@
 
 A planning coach for a small team. Each week it:
 
-- **On Monday**, messages each person, offers the items still open from last week ("do you plan to finish this off?"), and coaches them one short question at a time. It asks what done looks like by Friday, the few steps to get there, the blockers (access, people to talk to, decisions), and which OKR key result (KR) the work supports. It never does the task itself.
+- **On Monday**, messages each person, offers the items still open from last week ("do you plan to finish this off?"), and coaches them one short question at a time towards at most three outcomes for the week. For each one it asks what gets handed to whom by Friday, what could block it (access, people to talk to, decisions), which OKR key result (KR) it supports, and the first step. It stays at the level of what, not how, and never does the task itself.
 - **Mid-week**, checks in: "how's it going, anything new in the way?"
 - **On Friday**, reviews: "how did it go, what helped, what carries over?"
 - **Logs the plan** to Notion against the team's OKRs. It writes to its own database and only *suggests* changes to the OKR tracker, which the person confirms.
@@ -43,7 +43,7 @@ This calls the real API and costs roughly $1–2 per run. It prints PASS or FAIL
 
 | Check | Pass mark |
 |---|---|
-| 10 scripted personas (one-word answerer, "write the SQL for me", overloaded, fraud vocabulary...) role-played against the coach and graded by a separate model | 9 or more pass: one ask per message, at most 80 words, never does the task, asks about blockers, links a KR that fits |
+| 12 scripted personas (one-word answerer, "write the SQL for me", overloaded, back from leave and dictating, answers in step lists, fraud vocabulary...) role-played against the coach and graded by a separate model | 11 or more pass: one ask per message, at most 80 words, never does the task, stays at the top level (no method or step lists, no drilling into "happy with it"), frames done as a handover, asks about blockers, links a KR that fits |
 | 20 planning messages full of fraud vocabulary (mule accounts, SIM-swap, device tampering...) | 0 refused |
 | Time to first words, from pressing Enter (including any retry; failed turns count at their full wait) | Median 2.0 s or less over at least 30 replies. This is measured from your machine, not the hosted bot. |
 

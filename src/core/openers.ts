@@ -13,7 +13,7 @@ export function opener(touchpoint: Touchpoint, person: Person, openItems: OkrRow
   switch (touchpoint) {
     case "plan":
       if (openItems.length === 0) {
-        return `Hi ${person.name}, new week. Let's sketch it out together. What's on your plate this week?`;
+        return `Hi ${person.name}, new week. Let's sketch it out together. If it's Friday and the week went well, what's true? Up to three things.`;
       }
       if (openItems.length === 1) {
         return [

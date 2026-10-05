@@ -6,7 +6,7 @@ Agreed after an independent expert review (October 2026). Examples use the ficti
 
 One TypeScript service (Node 22) helps each person plan their week against the team's OKRs (objectives and key results).
 
-- **Monday, 08:30 local time:** a direct message (DM) in Microsoft Teams lists last week's unfinished items ("Do you plan to finish this off?"), then coaches one question at a time: done by Friday, steps, blockers, and which key result (KR) the work supports. It never does the work.
+- **Monday, 08:30 local time:** a direct message (DM) in Microsoft Teams lists last week's unfinished items ("Do you plan to finish this off?"), then coaches one question at a time towards at most three outcomes: for each, what is handed to whom by Friday, one blocker check, which key result (KR) it supports, and the first step. It stays at the level of what, not how, and never does the work.
 - **Wednesday and Friday:** a short check-in and a review.
 - **The team:** one Monday summary in the existing OKR meeting group chat.
 - **Quiet weeks:** two nudges, a heads-up showing the exact line the manager would get, then that line, copied to the person. "Stuck" reaches the manager only with consent.
@@ -131,9 +131,9 @@ export interface AvailabilityPort {
 
 | Table | Key columns | Phase |
 |---|---|---|
-| `people` | aad_object_id, email, notion_user_id, tz, country, working_days, manager_id | 2 |
+| `people` | aad_object_id, email, notion_user_id, tz, country, working_days, manager_id, coach_notes (written by the person, at most 300 characters) | 2 |
 | `okr_rows` | page_id, type, kr_code, name, status, blocked, current_state, due, owners, source | 2 |
-| `plan_items` | Bot item ID, person, week, title, kr_code, carried_from, carry_count, outcome, actions, blockers, status, share, ask_team, confirmed | 2 |
+| `plan_items` | Bot item ID, person, week, title, kr_code, carried_from, carry_count, done_looks_like (the handover), handed_to, first_step, blockers, status, friday_outcome, share, ask_team, confirmed | 2 |
 | `weeks`, `checkins` | state per person-week; check-in answers | 2 |
 | `conversations`, `messages` | frozen system prompt; `messages` is **append-only** (a trigger rejects UPDATE and DELETE; only the purge removes whole conversations) | 2 |
 | `turn_metrics` | first_text_ms, cache_read_tokens, token counts | 2 |
@@ -152,7 +152,7 @@ export interface AvailabilityPort {
 | Status | status | Planned, In progress, Blocked, Done, Partly, Carried over, Dropped |
 | KR | relation, `single_property` | Link to the KR row, with no back-column added to the tracker |
 | KR code | rich_text | Readable after the quarter changes |
-| Done looks like, Actions, Blockers | rich_text | Blockers truncated at Notion's 2,000-character limit |
+| Done looks like, Handed to, First step, Blockers | rich_text | Done looks like is the handover; Blockers truncated at Notion's 2,000-character limit |
 | Blocker type | multi_select | Access, Data, People, Decision, Setup, Time |
 | Mid-week update, Friday outcome | rich_text | Dated lines |
 | Carried over from | self-relation | Added after the database exists |
@@ -206,7 +206,18 @@ Planning, check-in and review are separate Claude conversations, each started fr
 
 **Carry-overs.** Last week's items not Done or Dropped, plus "In progress" tracker Tasks the person owns: at most three, by due date, with [Finish it] [Carry part of it] [Already done] [Drop it]. "Carry part" closes the old item as Partly and links a new one. "Already done" offers a tracker suggestion. A third carry-over prompts a re-scope offer; a new quarter's first Monday offers a KR picker.
 
-**Coaching.** The team's remit comes from `team.yaml` and is shown with the OKRs; `prompts/coach.md` holds the rules: one question per message, at most 80 words; reflect back and offer options; never do the task. Per item: done by Friday, steps, blocker sweep (access, people, decisions, data, time), KR link, first step today. The coach then recaps in one short line per item and asks the person to type "/done" (a Save button in Teams); one extraction builds the Save card (items, changeable KR, blockers, a "share" tick, [Save] [Change something]). No click in two working hours saves a draft. Button choices enter the chat as a line from the person, e.g. `[Chose: Finish "Map case tables"]`.
+**Coaching.** The team's remit comes from `team.yaml` and is shown with the OKRs; `prompts/coach.md` holds the rules: one question per message, at most 80 words; reflect back and offer options; never do the task or decide for the person. The order is: carry-overs, then "If it's Friday and the week went well, what's true?" (at most three outcomes, reflected back for correction), then per outcome: done as a handover (what goes to whom, by when), one blocker question (access, people, decisions, data, time), KR link, and the first step only. Only in a heavy week does it ask about focus time, what to drop and who else could take something. The coach then recaps one line per outcome ("handover (KR)") and ends "If that's too much, say what to cut. Otherwise type /done." (a Save button in Teams); one extraction builds the Save card (items, changeable KR, handover, blockers, a "share" tick, [Save] [Change something]). No click in two working hours saves a draft. Button choices enter the chat as a line from the person, e.g. `[Chose: Finish "Map case tables"]`.
+
+**Lessons from a manual trial (October 2026).** The team lead planned a real week with a general-purpose assistant playing a "chief of staff". What worked became coaching rules:
+- Stay at the top level: what, for whom, by when. Questions about method went too far.
+- Quality is the person's call. "When I'm happy with it" closes that question; the coach asks only where the work goes next.
+- Done means handed over (sent for comment, sign-off or use), because that is what others can see on Friday.
+- First step only, never the recipe. Whole projects get "what slice could be handed over this week?"; tiny admin becomes one "quick admin" line.
+- Read dictated words charitably and say the reading in passing so the person can correct it. When the person is confused, restate plainly and offer options.
+- Never fill in an outcome; rewording and asking for confirmation is fine.
+- The person's own coaching preferences ("stay top level") should carry over to next week: Phase 2 stores them as `coach_notes`, written by the person at the Friday review or through `/mine`, never inferred by the model.
+
+The trial also scanned the person's mail, chats, calendar and Notion pages before coaching. It made for sharper questions but needed broad access and took several minutes and hundreds of thousands of tokens per source. The bot does not do this (decision 15); see section 16.
 
 **Examples:**
 - Opener: "Hi Thabo, new week. Let's sketch it out together. These are still in progress on the tracker: *Map case tables* (KR 2.1) and *Data-quality tests* (KR 2.3). Which of these do you plan to finish off this week?" Only in-progress tasks are offered; for a longer-running one the coach asks what progress this week looks like rather than whether to finish or drop it.
@@ -261,6 +272,8 @@ KRs with nothing planned: 1.3, 3.3, 4.3
 ```
 
 Help requests appear only via [Ask the team]. Never shown: who hasn't planned, nudges, blocker detail, leave reasons.
+
+**Your own update (Phase 4).** After Save, [Copy my update] gives the person a fixed-format text to edit and post themselves: "What I'm working on this week" (one line per outcome, written as the handover and when) and "What I need help with" (named asks). The bot never posts as a person; a Teams bot can only post as itself (decision 16).
 
 ## 9. Latency
 
@@ -327,7 +340,9 @@ Work chats are personal information under South Africa's Protection of Personal 
 
 **Gate before anyone but the team lead chats:** the API key belongs to the company's Anthropic organisation, in its own workspace, retention setting recorded; a one-page staff notice is filed; Weekly Plans is restricted to the team. Until then only the team lead's own chats and the fictional fixture are used.
 
-**The notice covers:** what is logged; who sees what (you: all of yours; the team: shared titles and KR codes; the manager: Weekly Plans rows and notes you saw first; nobody: transcripts); the 90-day transcript purge; Anthropic (US) as processor; Microsoft's global Bot Service; how to see or delete your data.
+**The bot never reads** anyone's mail, chats or files. It reads the OKR tracker, the person's own replies and, from Phase 5, calendar free/busy and out-of-office status.
+
+**The notice covers:** what is logged; the coaching notes you write yourself; who sees what (you: all of yours; the team: shared titles and KR codes; the manager: Weekly Plans rows and notes you saw first; nobody: transcripts); the 90-day transcript purge; Anthropic (US) as processor; Microsoft's global Bot Service; how to see or delete your data.
 
 **Retention, for DPO sign-off:** transcripts 90 days; plan items and Notion rows kept as work records; audit events and metrics (no content) 12 months.
 
@@ -347,16 +362,16 @@ Work chats are personal information under South Africa's Protection of Personal 
 Each check passes before the next phase starts.
 
 **Phase 1: coaching spike in a terminal.** `coach.md`, the fictional fixture, `ClaudeLLM.ts`, `chat.ts`, `eval.ts`.
-How you'll know it worked: `npm run chat -- --as amara` asks one short question at a time. `npm run eval` reports at least 9 of 10 personas passing (one question per message, ≤80 words, never does the task, reaches a KR link), 0 of 20 refusals, and p50 first text ≤2.0 s over at least 30 turns, labelled "laptop, not hosted".
+How you'll know it worked: `npm run chat -- --as amara` asks one short question at a time. `npm run eval` reports at least 11 of 12 personas passing (one question per message, ≤80 words, never does the task, stays at the top level, frames done as a handover, reaches a KR link), 0 of 20 refusals, and p50 first text ≤2.0 s over at least 30 turns, labelled "laptop, not hosted".
 
-**Phase 2: remembers the week, in the terminal.** PGlite store, carry-overs, Save card with one extraction, per-conversation snapshot, date line, routing rules.
+**Phase 2: remembers the week, in the terminal.** PGlite store, carry-overs, Save card with one extraction (outcome, handover, handed to, first step, KR), per-conversation snapshot, date line, routing rules, and the person's own `coach_notes` in the cached context.
 How you'll know it worked: Save twice, then `npm run report -- --as thabo` shows each item once. `--touchpoint checkin` names your items; `--week next` asks "Do you plan to finish this off?" `npm test`: at least 4 of 5 saved transcripts extract the right KR.
 
 **Phase 3: Notion log.** Gate: a Notion internal connection from the workspace owner (a personal token on a private test page works for development).
 How you'll know it worked: `npm run notion:check` prints "OK: N KRs, M Tasks, all fields found" and the Proposed/Rejected rows skipped. After `npm run notion:create-db`, a saved plan appears within 30 s, its KR cell opens the KR row, and hand edits survive the next save. Suggestions go `off`, `dry-run` (change shown and audited, tracker untouched), then `live`; a row hand-edited before Apply gets a fresh offer.
 
 **Phase 4: scheduler, nudges, Teams in the Agents Playground.**
-How you'll know it worked: `npm run simulate-week -- --start 2026-10-19 --away pieter:2026-10-21..23 --silent lindiwe` (fake clock, `ScriptedLLM`, offline) prints a local-time timeline: Kenyan ladders skip Mashujaa Day; Lindiwe gets two nudges, the heads-up, then Jordan's note Thursday 10:00; the summary is edited for a late plan. With `--away jordan:2026-10-22..23` the note is held, then dropped. Rerunning or killing midway sends nothing twice. In the Agents Playground (`PLAYGROUND=1`) cards and buttons work; without it or `CLIENT_ID`/`TENANT_ID` the bot won't start; an unlisted user gets the team-only reply.
+How you'll know it worked: `npm run simulate-week -- --start 2026-10-19 --away pieter:2026-10-21..23 --silent lindiwe` (fake clock, `ScriptedLLM`, offline) prints a local-time timeline: Kenyan ladders skip Mashujaa Day; Lindiwe gets two nudges, the heads-up, then Jordan's note Thursday 10:00; the summary is edited for a late plan. With `--away jordan:2026-10-22..23` the note is held, then dropped. Rerunning or killing midway sends nothing twice. In the Agents Playground (`PLAYGROUND=1`) cards and buttons work; without it or `CLIENT_ID`/`TENANT_ID` the bot won't start; an unlisted user gets the team-only reply. After Save, [Copy my update] gives the fixed-format "What I'm working on / What I need help with" text. The first opener after `/away` says welcome back and asks what from the time away needs doing, handing off or dropping.
 
 **Phase 5: hosted pilot.** Gate: IT approval (`docs/ask-IT.md`) and the staff notice.
 How you'll know it worked: the Monday DM arrives unprompted at 08:30; status within 0.5 s; first text p50 ≤2.0 s, p95 ≤3.5 s over week one; an all-day OOF event stops that day's nudge; the ops DM arrives with the secret-expiry countdown; `/healthz` is green; a backup restores; the purge removes a 90-day-old test transcript.
@@ -379,6 +394,9 @@ All confirmed by the independent expert review.
 12. Chose **one Weekly Plans database per quarter** over a new relation column each quarter, because columns would pile up.
 13. Chose **template openers and a code-built summary** over model-written ones, because they are instant and cannot misstate last week.
 14. Chose **never resending an unsure message** over resending, because a duplicate costs more trust than a late nudge.
+15. Chose **no mail, chat or file scan before coaching** over a per-person briefing, because it needs read access to every mailbox and chat, pulls in personal items (pay, leave, HR), costs far more than the coaching itself, and a team bot reading staff mail is the "watched, not coached" risk made real. Last week's plan and review, the tracker, and (Phase 5) calendar free time give the coach its facts instead.
+16. Chose **a copyable update the person posts themselves** over the bot posting on their behalf, because a Teams bot can only post as itself and the person's own words should win.
+17. Chose **coaching notes written by the person** over notes the model infers, because silent profiling would undermine trust.
 
 ## 15. Risks
 
@@ -395,4 +413,4 @@ All confirmed by the independent expert review.
 
 ## 16. Deliberately not built
 
-A Foundry code path; server-side refusal fallback; per-turn extraction, one-turn system notes, cache pre-warming; a sandbox tracker copy; two-way Notion sync or webhooks (polling is enough); OAuth sign-in; a deputy manager; automatic stuck escalation; model-written openers or summaries; tools on the hot path; queues, Redis, microservices, extra replicas; a dashboard.
+A Foundry code path; server-side refusal fallback; per-turn extraction, one-turn system notes, cache pre-warming; a sandbox tracker copy; two-way Notion sync or webhooks (polling is enough); OAuth sign-in; a deputy manager; automatic stuck escalation; model-written openers, summaries or team posts; a scan of mail, Teams chats or Notion pages before coaching (a personal, opt-in assistant using the person's own sign-in would be a separate product with its own impact assessment); tools on the hot path; queues, Redis, microservices, extra replicas; a dashboard.

@@ -36,10 +36,10 @@ describe("sample data", () => {
     expect(activeRows(tracker.rows).length).toBeLessThan(tracker.rows.length);
   });
 
-  it("has the 10 personas and 20 refusal prompts the Phase 1 check expects", () => {
-    expect(personas).toHaveLength(10);
+  it("has the 12 personas and 20 refusal prompts the Phase 1 check expects", () => {
+    expect(personas).toHaveLength(12);
     expect(refusals).toHaveLength(20);
-    expect(new Set(personas.map((p) => p.id)).size).toBe(10);
+    expect(new Set(personas.map((p) => p.id)).size).toBe(12);
   });
 
   it("keeps the OKR snapshot big enough to cache (Sonnet 5.5 minimum is 512 tokens)", () => {
@@ -66,6 +66,17 @@ describe("sample openers", () => {
     for (const p of team.people) {
       const text = opener("plan", p, openItemsFor(p.id, tracker));
       expect(checkReply(text).problems, `${p.id}: ${text}`).toEqual([]);
+    }
+  });
+
+  it("ask for this week's outcomes when nothing is open on the tracker", async () => {
+    const { opener } = await import("../src/core/openers.js");
+    const { checkReply } = await import("../src/core/replyRules.js");
+    const text = opener("plan", team.people[0]!, []);
+    expect(text).toMatch(/If it's Friday and the week went well, what's true\?/);
+    expect(checkReply(text).problems).toEqual([]);
+    for (const kind of ["checkin", "review"] as const) {
+      expect(checkReply(opener(kind, team.people[0]!, [])).problems, kind).toEqual([]);
     }
   });
 });

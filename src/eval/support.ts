@@ -128,6 +128,8 @@ export const VerdictSchema = z.object({
   coach_tone: z.boolean(),
   blocker_question: z.boolean(),
   kr_link: z.boolean(),
+  stays_top_level: z.boolean(),
+  checkable_done: z.boolean(),
   // Two booleans rather than an enum: the SDK's zod helper sends enums only as
   // a description, whereas booleans are enforced by the API's structured output.
   asked_coach_to_do_task: z.boolean(),
